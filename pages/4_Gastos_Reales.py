@@ -8,10 +8,13 @@ from models import Expense, Mall, OI, Company, Quote
 from auth import require_role
 from services import get_active_rate
 
-# Librerías para PDF
+# Librerías para PDF y Estilos
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_RIGHT
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import Paragraph
 import io
 
 require_role(["ADMIN", "AUTORIZADO"])
@@ -24,7 +27,7 @@ tab_odc, tab_caja, tab_host = st.tabs(["📝 ODC", "📦 Caja Chica", "🎤 Host
 def get_active_activities():
     return db.query(Quote).filter(Quote.status.in_(["EJECUTADA", "APROBADA"])).all()
 
-# --- PESTAÑA 1 y 2 (Sin cambios mayores, solo mantenemos estructura) ---
+# --- PESTAÑA 1: ODC (Orden de Compra) ---
 with tab_odc:
     st.subheader("Registro por Orden de Compra")
     with st.form("form_odc", clear_on_submit=True):
@@ -48,6 +51,7 @@ with tab_odc:
                 db.add(Expense(date=date_odc, year=date_odc.year, month=date_odc.month, mall_id=act_sel.mall_id, oi_id=oi_sel.id, quote_id=act_sel.id, category="ODC", description=desc_odc, amount_gtq=amount_q, amount_usd=amount_q/rate, odc_number=odc_text, company_id=prov_sel.id if prov_sel else None))
                 db.commit(); st.success("Guardado")
 
+# --- PESTAÑA 2: CAJA CHICA ---
 with tab_caja:
     st.subheader("Registro de Caja Chica")
     with st.form("form_cc", clear_on_submit=True):
@@ -65,7 +69,7 @@ with tab_caja:
             db.add(Expense(date=date_cc, year=date_cc.year, month=date_cc.month, mall_id=act_cc.mall_id, oi_id=oi_cc.id, quote_id=act_cc.id, category="CAJA_CHICA", description=f"Factura {fact_cc}", amount_gtq=amount_cc, amount_usd=amount_cc/rate, doc_number=fact_cc, company_id=prov_cc.id, text_additional=txt_add))
             db.commit(); st.success("Guardado")
 
-# --- PESTAÑA 3: HOST (CON GENERACIÓN DE CONTRATO Y RECIBO) ---
+# --- PESTAÑA 3: HOST (CONTRATO JUSTIFICADO Y FIRMAS CENTRADAS) ---
 def format_date_es(d):
     meses = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
     return f"{d.day} de {meses[d.month]} de {d.year}"
@@ -79,13 +83,14 @@ with tab_host:
     h1, h2, h3 = st.columns(3)
     prov_host = h1.selectbox("Proveedor (Host)", provs, format_func=lambda x: x.name, key="prov_host")
     if prov_host:
-        h1.caption(f"CUI: {prov_host.cui if prov_host.cui else '⚠️ Falta CUI'}")
+        # Usamos getattr por seguridad si la base de datos es vieja
+        cui_actual = getattr(prov_host, 'cui', None)
+        h1.caption(f"CUI: {cui_actual if cui_actual else '⚠️ Falta CUI'}")
     
     act_host_selection = h2.selectbox("Actividad", acts, format_func=lambda x: x.activity_name, key="act_host")
     date_host = h3.date_input("Fecha Documentos", datetime.date.today(), key="date_host")
     
-    # NUEVO CAMPO PARA EL CONTRATO
-    contract_desc_form = st.text_input("Descripción para el Contrato (ej: promoción de producto, eventos...)", placeholder="Ingresa la descripción del servicio para el contrato legal")
+    contract_desc_form = st.text_input("Descripción para el Contrato", placeholder="Ej: promoción de producto, eventos...")
 
     st.markdown("#### Detalle de Servicios")
     for idx, row in enumerate(st.session_state["host_rows"]):
@@ -106,10 +111,12 @@ with tab_host:
     st.metric("Total a Pagar", f"Q{total_host:,.2f}")
 
     if st.button("💾 Guardar y Generar Documentos"):
+        cui_val = getattr(prov_host, 'cui', None)
+        
         if not act_host_selection or not prov_host:
             st.error("Faltan datos")
-        elif not prov_host.cui:
-            st.error(f"El proveedor {prov_host.name} no tiene CUI registrado. Agrégalo en Catálogos Admin.")
+        elif not cui_val:
+            st.error(f"El proveedor {prov_host.name} no tiene CUI. Agrégalo en Catálogos.")
         elif not contract_desc_form:
             st.error("Debes llenar la Descripción para el Contrato.")
         else:
@@ -117,7 +124,6 @@ with tab_host:
             rate = get_active_rate(db)
             oi_id_final = act_fresh.oi_id if act_fresh.oi_id else db.query(OI).first().id 
             
-            # Guardar Gasto
             new_exp = Expense(
                 date=date_host, year=date_host.year, month=date_host.month,
                 mall_id=act_fresh.mall_id, oi_id=oi_id_final, quote_id=act_fresh.id,
@@ -155,7 +161,7 @@ with tab_host:
             p.setFont("Helvetica", 10)
             p.drawString(50, y-60, f"Banco: {prov_host.bank_name}"); p.drawString(50, y-75, f"Nombre: {prov_host.name}"); p.drawString(50, y-90, f"Cuenta: {prov_host.account_number}")
             
-            # Tabla Recibo
+            # Tabla
             y_table = y - 140
             p.setFont("Helvetica-Bold", 10)
             p.drawString(50, y_table, "DESCRIPTION"); p.drawString(350, y_table, "RATE"); p.drawString(420, y_table, "DIA"); p.drawString(500, y_table, "AMOUNT"); p.line(50, y_table-5, 550, y_table-5)
@@ -167,84 +173,104 @@ with tab_host:
             p.save()
             buff_recibo.seek(0)
             
-            # --- 2. GENERAR CONTRATO (PDF) ---
+            # --- 2. GENERAR CONTRATO (JUSTIFICADO Y CENTRADO) ---
             buff_contrato = io.BytesIO()
             c = canvas.Canvas(buff_contrato, pagesize=LETTER)
             
-            # Header Contrato
+            # Header
             if os.path.exists(header_img_path):
                 c.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
             
-            c.setFillColor(colors.black)
+            # Título y Fecha (Alineados a la derecha)
+            styles = getSampleStyleSheet()
+            style_right = ParagraphStyle(name='Right', parent=styles['Normal'], alignment=TA_RIGHT, fontSize=11, leading=14)
             
-            # Título y Fecha
-            c.setFont("Helvetica-Bold", 11)
-            c.drawRightString(width-50, height-130, "Asunto: Brand Activation Ambassador")
-            c.setFont("Helvetica", 11)
-            c.drawRightString(width-50, height-150, f"En la fecha: {format_date_es(date_host)}.")
+            # Usamos Paragraph para poder usar negritas <b> y alineación
+            p_asunto = Paragraph(f"<b>Asunto: Brand Activation Ambassador</b><br/><br/>En la fecha: <b>{format_date_es(date_host)}</b>.", style_right)
+            w, h = p_asunto.wrap(width - 100, 100) # Margen 50
+            p_asunto.drawOn(c, 50, height - 160)
             
-            # Cuerpo del Contrato
-            y_text = height - 200
-            line_height = 16
-            left_margin = 50
+            # -- CUERPO JUSTIFICADO --
+            style_justify = ParagraphStyle(name='Justify', parent=styles['Normal'], alignment=TA_JUSTIFY, fontSize=11, leading=16, spaceAfter=12)
             
-            # Párrafo 1
-            c.drawString(left_margin, y_text, f"Yo, {prov_host.name} (del forms) me identifico con el Documento Personal de")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, f"Identificación (DPI) con Código Único de Identificación (CUI) No. {prov_host.cui} (de BDD),")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, "por medio de la presente acuerdo prestar servicios como BRAND ACTIVATION AMBASSADOR")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, f"- {contract_desc_form.upper()} para SPECTRUM")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, "MEDIA prestando un servicio y realizando actividades relacionadas con promoción de")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, "producto, eventos o generación de contenido, según lo asignado.")
-            y_text -= (line_height * 2)
+            # Texto 1
+            text_body_1 = f"""
+            Yo, <b>{prov_host.name}</b> me identifico con el Documento Personal de Identificación (DPI) 
+            con Código Único de Identificación (CUI) No. <b>{cui_val}</b>, por medio de la presente acuerdo 
+            prestar servicios como <b>BRAND ACTIVATION AMBASSADOR - {contract_desc_form.upper()}</b> para 
+            SPECTRUM MEDIA prestando un servicio y realizando actividades relacionadas con promoción de 
+            producto, eventos o generación de contenido, según lo asignado.
+            """
             
-            # Párrafo 2
-            c.drawString(left_margin, y_text, f"Como compensación por estos servicios, se entregará un pago único de Q.{total_host:,.2f} (del")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, "form), el día y lugar que me ha sido notificado previamente.")
-            y_text -= (line_height * 2)
+            # Texto 2
+            text_body_2 = f"""
+            Como compensación por estos servicios, se entregará un pago único de <b>Q.{total_host:,.2f}</b>, 
+            el día y lugar que me ha sido notificado previamente.
+            """
             
-            # Cláusulas
-            c.drawString(left_margin, y_text, "En consecuencia, ambas partes reconocen expresamente que:")
-            y_text -= (line_height * 1.5)
+            # Texto 3 (Cláusulas)
+            text_body_3 = """
+            En consecuencia, ambas partes reconocen expresamente que:<br/>
+            • No existe entre ellas relación laboral de ningún tipo, conforme a la legislación laboral vigente.<br/>
+            • No se genera ninguna obligación de carácter laboral, tales como pago de salarios, prestaciones laborales, indemnizaciones, o cualquier otro derecho laboral que derive de una relación de trabajo subordinado.<br/>
+            • Cada parte actúa de forma autónoma, sin que exista dependencia, ni vínculo permanente más allá del objeto del contrato de servicios.
+            """
             
-            clauses = [
-                "No existe entre ellas relación laboral de ningún tipo, conforme a la legislación laboral vigente.",
-                "No se genera ninguna obligación de carácter laboral, tales como pago de salarios,", 
-                "prestaciones laborales, indemnizaciones, o cualquier otro derecho laboral.",
-                "Cada parte actúa de forma autónoma, sin que exista dependencia, ni vínculo",
-                "permanente más allá del objeto del contrato de servicios."
-            ]
+            # Texto 4 (Cierre)
+            text_body_4 = f"""
+            La presente notificación tiene como finalidad reiterar la naturaleza de la prestación de servicios, 
+            y dejar claro que no se establece, ni se presumirá, ningún tipo de vínculo laboral entre 
+            Spectrum Media y {prov_host.name}.
+            """
             
-            for clause in clauses:
-                c.drawString(left_margin + 20, y_text, f"•   {clause}")
-                y_text -= line_height
+            # Dibujar los párrafos uno tras otro
+            # Comenzamos debajo del asunto
+            y_curr = height - 200 
             
-            y_text -= line_height
-            c.drawString(left_margin, y_text, "La presente notificación tiene como finalidad reiterar la naturaleza de la prestación de")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, "servicios, y dejar claro que no se establece, ni se presumirá, ningún tipo de vínculo laboral")
-            y_text -= line_height
-            c.drawString(left_margin, y_text, f"entre Spectrum Media y {prov_host.name}")
+            for txt in [text_body_1, text_body_2, text_body_3, text_body_4]:
+                p = Paragraph(txt, style_justify)
+                w, h = p.wrap(width - 100, height) # 50 px margen cada lado
+                p.drawOn(c, 50, y_curr - h)
+                y_curr -= (h + 20) # Espacio entre párrafos
             
-            # Firmas
-            y_sig = 150
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(left_margin, y_sig, "Firma del Brand Ambassador: __________________________")
-            c.drawString(left_margin, y_sig-15, f"Nombre completo: {prov_host.name}")
+            # -- FIRMAS CENTRADAS --
             
-            # Firma Spectrum (Imagen o Espacio)
-            c.drawString(left_margin, 80, "Firma del responsable de la empresa:")
-            c.drawString(left_margin, 65, "Nombre y cargo: Maria Jose Aguilar, Product Executive")
+            # Calculamos el centro de la página
+            center_x = width / 2
+            
+            # Firma 1: Brand Ambassador (Centrada)
+            y_sig_1 = y_curr - 60
+            c.setLineWidth(1)
+            c.line(center_x - 100, y_sig_1, center_x + 100, y_sig_1) # Línea centrada
+            
+            style_center = ParagraphStyle(name='Center', parent=styles['Normal'], alignment=TA_CENTER, fontSize=10, leading=12)
+            p_sig1 = Paragraph(f"<b>Firma del Brand Ambassador</b><br/>{prov_host.name}", style_center)
+            w, h = p_sig1.wrap(200, 50)
+            p_sig1.drawOn(c, center_x - 100, y_sig_1 - h - 5)
+            
+            # Firma 2: Empresa (Centrada más abajo)
+            y_sig_2 = y_sig_1 - 100
+            
+            # -- IMAGEN DE FIRMA (firma.png) --
+            # Intentamos poner la firma sobre la línea
+            firma_path = "firma.png"
+            if os.path.exists(firma_path):
+                # Ancho deseado de la firma: 120px
+                f_w = 120
+                f_h = 60 # Ajusta según tu imagen
+                # Centramos la imagen en X y la ponemos justo sobre la línea Y
+                c.drawImage(firma_path, center_x - (f_w/2), y_sig_2, width=f_w, height=f_h, mask='auto', preserveAspectRatio=True)
+            
+            # Línea Empresa
+            c.line(center_x - 100, y_sig_2, center_x + 100, y_sig_2)
+            p_sig2 = Paragraph("<b>Firma del responsable de la empresa:</b><br/>Maria Jose Aguilar, Product Executive", style_center)
+            w, h = p_sig2.wrap(200, 50)
+            p_sig2.drawOn(c, center_x - 100, y_sig_2 - h - 5)
             
             c.save()
             buff_contrato.seek(0)
             
-            # --- 3. CREAR ZIP ---
+            # --- 3. ZIP ---
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                 zip_file.writestr(f"Recibo_{recibo_id_str}.pdf", buff_recibo.getvalue())
