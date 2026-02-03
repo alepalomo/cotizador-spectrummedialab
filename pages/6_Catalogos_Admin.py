@@ -123,48 +123,72 @@ with tab4:
             try: db.add(User(username=u, password_hash=hash_password(p), role=r)); db.commit(); st.success("Ok")
             except: st.error("Error")
 
-# --- TAB 5: PROVEEDORES (NUEVO) ---
+# --- TAB 5: PROVEEDORES ---
 with tab5:
-    st.subheader("🏢 Catálogo de Proveedores")
+    st.subheader("🏢 Catálogo de Proveedores Detallado")
     
-    # Crear Proveedor
     with st.expander("➕ Agregar Nuevo Proveedor", expanded=True):
-        col_prov, col_btn_prov = st.columns([3, 1])
-        new_prov_name = col_prov.text_input("Nombre de la Empresa / Proveedor")
-        if col_btn_prov.button("Agregar Proveedor"):
-            if new_prov_name:
-                try:
-                    db.add(Company(name=new_prov_name))
-                    db.commit()
-                    st.success(f"Proveedor '{new_prov_name}' agregado.")
-                    st.rerun()
-                except:
-                    st.error("Error: Ese proveedor ya existe.")
-            else:
-                st.warning("Escribe un nombre.")
+        with st.form("new_prov_form"):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Nombre Comercial")
+            legal = c2.text_input("Razón Social")
+            
+            c3, c4 = st.columns(2)
+            p_type = c3.selectbox("Tipo", ["Certificado", "Directo"])
+            nit = c4.text_input("NIT")
+            
+            c5, c6 = st.columns(2)
+            bank = c5.text_input("Banco")
+            acc = c6.text_input("No. de Cuenta")
+            
+            if st.form_submit_button("Guardar Proveedor"):
+                if name:
+                    try:
+                        db.add(Company(
+                            name=name, legal_name=legal, provider_type=p_type,
+                            nit=nit, bank_name=bank, account_number=acc
+                        ))
+                        db.commit()
+                        st.success("Proveedor agregado.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("El nombre es obligatorio.")
 
     st.divider()
     
-    # Editar Proveedores
+    # Tabla editable completa
     companies = db.query(Company).all()
     if companies:
-        df_comp = pd.DataFrame([{"id": c.id, "name": c.name} for c in companies])
+        data_c = []
+        for c in companies:
+            data_c.append({
+                "id": c.id,
+                "name": c.name,
+                "legal_name": c.legal_name,
+                "provider_type": c.provider_type,
+                "nit": c.nit,
+                "bank_name": c.bank_name,
+                "account_number": c.account_number
+            })
         
+        df_comp = pd.DataFrame(data_c)
         edited_comps = st.data_editor(
             df_comp,
             column_config={
                 "id": st.column_config.NumberColumn(disabled=True, width="small"),
-                "name": st.column_config.TextColumn("Nombre Proveedor", width="large")
+                "name": "Nombre Comercial",
+                "legal_name": "Razón Social",
+                "provider_type": st.column_config.SelectboxColumn("Tipo", options=["Certificado", "Directo"]),
+                "nit": "NIT",
+                "bank_name": "Banco",
+                "account_number": "Cuenta"
             },
             hide_index=True,
             key="editor_companies",
-            num_rows="dynamic" # Permite borrar filas
+            num_rows="dynamic"
         )
         
         if st.button("Guardar Cambios Proveedores"):
-            # Lógica especial para borrar si se eliminó de la tabla
-            # (st.data_editor con num_rows="dynamic" maneja borrado visual, pero hay que sincronizar)
-            # Por simplicidad usaremos save_changes_generic para actualizaciones
             save_changes_generic(Company, edited_comps)
-    else:
-        st.info("No hay proveedores registrados. Agrega uno arriba.")

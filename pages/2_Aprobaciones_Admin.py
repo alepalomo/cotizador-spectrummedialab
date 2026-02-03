@@ -79,3 +79,26 @@ else:
                     db.commit()
                     st.error(f"Solicitud #{q.id} Rechazada.")
                     st.rerun()
+
+st.divider()
+st.header("🏁 Liquidación de Actividades")
+st.info("Utiliza esta sección para cerrar actividades (Ejecutadas) que ya no deben recibir más gastos.")
+
+# Buscar actividades EJECUTADAS (que están vivas)
+active_quotes = db.query(Quote).filter(Quote.status == "EJECUTADA").all()
+
+if not active_quotes:
+    st.write("No hay actividades activas para liquidar.")
+else:
+    # Selector para elegir cuál liquidar
+    q_to_close = st.selectbox(
+        "Selecciona la actividad a CERRAR/LIQUIDAR:",
+        active_quotes,
+        format_func=lambda x: f"#{x.id} - {x.activity_name} ({x.activity_type.name})"
+    )
+    
+    if st.button(f"🔒 Cerrar Actividad #{q_to_close.id}"):
+        q_to_close.status = "LIQUIDADA"
+        db.commit()
+        st.success(f"La actividad '{q_to_close.activity_name}' ha sido liquidada y ya no aparecerá en Gastos.")
+        st.rerun()

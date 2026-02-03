@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Date, DateTime, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Date, DateTime, Text, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -13,7 +13,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# --- UBICACIONES (MALL / OI) ---
+# --- UBICACIONES ---
 class Mall(Base):
     __tablename__ = "malls"
     id = Column(Integer, primary_key=True, index=True)
@@ -68,7 +68,7 @@ class Insumo(Base):
     billing_mode = Column(String) 
     is_active = Column(Boolean, default=True)
 
-# --- COTIZACIONES ---
+# --- COTIZACIONES (ACTIVIDADES) ---
 class Quote(Base):
     __tablename__ = "quotes"
     id = Column(Integer, primary_key=True)
@@ -77,7 +77,10 @@ class Quote(Base):
     oi_id = Column(Integer, ForeignKey("ois.id"), nullable=True)
     activity_name = Column(String, nullable=False)
     activity_type_id = Column(Integer, ForeignKey("activity_types.id"))
-    status = Column(String, default="BORRADOR")
+    
+    # Status: BORRADOR, ENVIADA, APROBADA, EJECUTADA, LIQUIDADA
+    status = Column(String, default="BORRADOR") 
+    
     total_cost_gtq = Column(Float, default=0.0)
     total_cost_usd = Column(Float, default=0.0)
     suggested_price_usd_m70 = Column(Float, default=0.0)
@@ -104,17 +107,25 @@ class QuoteLine(Base):
     quote = relationship("Quote", back_populates="lines")
     insumo = relationship("Insumo")
 
-# --- GASTOS REALES ---
+# --- GASTOS REALES Y PROVEEDORES ---
 class ExpenseType(Base):
     __tablename__ = "expense_types"
     id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True)
+    name = Column(String, unique=True) # ODC, CAJA_CHICA, HOST
     is_active = Column(Boolean, default=True)
 
 class Company(Base):
     __tablename__ = "companies"
     id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True)
+    name = Column(String, unique=True) # Nombre comercial
+    
+    # Nuevos campos solicitados
+    provider_type = Column(String, nullable=True) # Certificado / Directo
+    bank_name = Column(String, nullable=True)
+    account_number = Column(String, nullable=True)
+    legal_name = Column(String, nullable=True) # Razón Social
+    nit = Column(String, nullable=True)
+    
     is_active = Column(Boolean, default=True)
 
 class Expense(Base):
@@ -125,22 +136,26 @@ class Expense(Base):
     month = Column(Integer)
     mall_id = Column(Integer, ForeignKey("malls.id"))
     oi_id = Column(Integer, ForeignKey("ois.id"))
-    quote_id = Column(Integer, ForeignKey("quotes.id"), nullable=True)
+    quote_id = Column(Integer, ForeignKey("quotes.id"), nullable=False) # Ahora es obligatorio
     
+    # Campos Generales
+    category = Column(String) # ODC, CAJA_CHICA, HOST
     description = Column(String)
     amount_gtq = Column(Float)
     amount_usd = Column(Float)
     
-    doc_type = Column(String)     # Tipo (Factura, Recibo...)
-    doc_number = Column(String)   # Número de Factura
-    odc_number = Column(String, nullable=True) # <--- NUEVO CAMPO ODC
+    # Campos Específicos ODC / Caja Chica
+    doc_number = Column(String, nullable=True) # Factura
+    odc_number = Column(String, nullable=True) # ODC
+    text_additional = Column(String, nullable=True) # Para caja chica
     
-    expense_type_id = Column(Integer, ForeignKey("expense_types.id"))
+    # Para HOST (guardamos el detalle de las filas en JSON por simplicidad)
+    host_details = Column(JSON, nullable=True) 
+    
     company_id = Column(Integer, ForeignKey("companies.id"))
-    notes = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     mall = relationship("Mall")
     oi = relationship("OI")
-    expense_type = relationship("ExpenseType")
     company = relationship("Company")
+    quote = relationship("Quote")
