@@ -1,40 +1,44 @@
 import streamlit as st
-import bcrypt
-from database import get_db
+# Configuración DEBE ser lo primero
+st.set_page_config(page_title="Cotizador Spectrum", page_icon="📊")
+
+from database import Base, engine, get_db
+from auth import login_form, require_role, hash_password
 from models import User
 
-def hash_password(password):
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+# Crear tablas
+Base.metadata.create_all(bind=engine)
 
-def check_password(password, hashed):
-    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+# Obtener sesión
+db = next(get_db())
 
-def login_form():
-    st.title("🔐 Iniciar Sesión")
+# --- BLOQUE MÁGICO: AUTOCREAR ADMIN ---
+try:
+    admin_user = db.query(User).filter(User.username == "admin").first()
+    if not admin_user:
+        # Crea el usuario admin si no existe
+        admin_pass = hash_password("admin123") 
+        new_admin = User(username="admin", password_hash=admin_pass, role="ADMIN")
+        db.add(new_admin)
+        db.commit()
+        print("✅ Usuario Admin creado automáticamente.")
+except Exception as e:
+    print(f"Error verificando admin: {e}")
+# -----------------------------------------------------
+
+# Lógica de Login
+if "user_id" not in st.session_state:
+    login_form()
+else:
+    # Sidebar
+    st.sidebar.title(f"Hola, {st.session_state['username']}")
+    st.sidebar.write(f"Rol: {st.session_state['role']}")
     
-    with st.form("login"):
-        username = st.text_input("Usuario")
-        password = st.text_input("Contraseña", type="password")
-        submitted = st.form_submit_button("Entrar")
-        
-        if submitted:
-            db = next(get_db())
-            user = db.query(User).filter(User.username == username).first()
-            
-            if user and check_password(password, user.password_hash):
-                st.session_state["user_id"] = user.id
-                st.session_state["username"] = user.username
-                st.session_state["role"] = user.role
-                st.success(f"Bienvenido {user.username}")
-                st.rerun()
-            else:
-                st.error("Usuario o contraseña incorrectos")
-
-def require_role(roles):
-    if "user_id" not in st.session_state:
-        st.warning("Debes iniciar sesión.")
-        st.stop()
+    if st.sidebar.button("Cerrar Sesión"):
+        for key in ["user_id", "role", "username"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
     
-    if st.session_state["role"] not in roles:
-        st.error("⛔ No tienes permisos para ver esta página.")
-        st.stop()
+    st.write("---")
+    st.info("👈 Selecciona una opción en el menú de la izquierda.")
