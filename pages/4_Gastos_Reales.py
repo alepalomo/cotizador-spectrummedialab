@@ -34,7 +34,12 @@ with tab_odc:
         
         # OIs
         ois = db.query(OI).filter(OI.is_active==True).all()
-        oi_sel = c3.selectbox("OI que registra el gasto", ois, format_func=lambda x: f"{x.oi_code} - {x.oi_name}", key="oi_odc")
+        oi_sel = c3.selectbox(
+            "OI que registra el gasto", 
+            ois, 
+            format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", 
+            key="oi_odc"
+        )
         
         c4, c5 = st.columns(2)
         provs = db.query(Company).filter(Company.is_active==True).all()
@@ -43,7 +48,7 @@ with tab_odc:
         
         desc_odc = st.text_input("Descripción del Gasto")
         
-        # Actividad Vinculada (Obligatoria)
+        # Actividad Vinculada
         acts = get_active_activities()
         act_sel = st.selectbox("Vincular a Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_odc")
         
@@ -73,7 +78,8 @@ with tab_odc:
         data = db.query(Expense).filter(Expense.category=="ODC", Expense.date >= start_d, Expense.date <= end_d).all()
         if data:
             df = pd.DataFrame([{
-                "Fecha": e.date, "ODC": e.odc_number, "OI": e.oi.oi_code, 
+                "Fecha": e.date, "ODC": e.odc_number, 
+                "OI": e.oi.oi_code, 
                 "Proveedor": e.company.name if e.company else "", 
                 "Monto Q": e.amount_gtq, "Descripcion": e.description,
                 "Actividad": e.quote.activity_name
@@ -92,12 +98,16 @@ with tab_caja:
         fact_cc = c3.text_input("# Factura", key="fact_cc")
         
         c4, c5 = st.columns(2)
-        # Proveedor (Autocompletar NIT y Razón Social internamente)
         prov_cc = c4.selectbox("Proveedor", provs, format_func=lambda x: f"{x.name} (NIT: {x.nit})", key="prov_cc")
         if prov_cc:
             st.caption(f"📌 NIT: {prov_cc.nit} | Razón Social: {prov_cc.legal_name}")
             
-        oi_cc = c5.selectbox("Orden Interna", ois, format_func=lambda x: x.oi_code, key="oi_cc")
+        oi_cc = c5.selectbox(
+            "Orden Interna", 
+            ois, 
+            format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", 
+            key="oi_cc"
+        )
         
         txt_add = st.text_input("Texto Adicional 2")
         act_cc = st.selectbox("Vincular a Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_cc")
@@ -121,7 +131,6 @@ with tab_caja:
     if st.button("Generar CSV Contable"):
         data_cc = db.query(Expense).filter(Expense.category=="CAJA_CHICA").all()
         if data_cc:
-            # Estructura fija solicitada
             export_data = []
             for e in data_cc:
                 export_data.append({
@@ -142,26 +151,22 @@ with tab_caja:
             df_cc = pd.DataFrame(export_data)
             st.download_button("Descargar CSV Contable", df_cc.to_csv(index=False).encode('utf-8'), "caja_chica.csv", "text/csv")
 
-# --- PESTAÑA 3: HOST (CON GENERACIÓN DE PDF) ---
+# --- PESTAÑA 3: HOST (CON FIX DE DETACHED INSTANCE) ---
 with tab_host:
     st.subheader("Generación de Recibos Host")
     
-    # Variables de estado para las filas
     if "host_rows" not in st.session_state:
         st.session_state["host_rows"] = [{"desc": "", "rate": 0.0, "days": 0}]
 
-    # 1. Cabecera
     h1, h2 = st.columns(2)
     prov_host = h1.selectbox("Proveedor (Host)", provs, format_func=lambda x: x.name, key="prov_host")
     if prov_host:
         h1.info(f"🏦 {prov_host.bank_name} | No. {prov_host.account_number}")
     
-    act_host = h2.selectbox("Actividad", acts, format_func=lambda x: x.activity_name, key="act_host")
+    act_host_selection = h2.selectbox("Actividad", acts, format_func=lambda x: x.activity_name, key="act_host")
     
-    # 2. Filas Dinámicas (Hasta 10)
     st.markdown("#### Detalle de Servicios")
     
-    # Editor de filas
     for idx, row in enumerate(st.session_state["host_rows"]):
         c_desc, c_rate, c_days, c_del = st.columns([3, 1, 1, 0.5])
         row["desc"] = c_desc.text_input(f"Descripción {idx+1}", value=row["desc"], key=f"hd_{idx}")
@@ -177,25 +182,27 @@ with tab_host:
             st.session_state["host_rows"].append({"desc": "", "rate": 0.0, "days": 0})
             st.rerun()
 
-    # Cálculo Total
     total_host = sum([r["rate"] * r["days"] for r in st.session_state["host_rows"]])
     st.metric("Total a Pagar", f"Q{total_host:,.2f}")
 
-    # 3. Guardar y Generar PDF
     if st.button("💾 Guardar y Generar PDF"):
-        if not act_host or not prov_host:
+        if not act_host_selection or not prov_host:
             st.error("Faltan datos principales")
         else:
-            # Guardar en BD
+            # --- FIX: RECARGAR ACTIVIDAD FRESCA DESDE LA BD ---
+            # Esto evita el error "DetachedInstanceError" al acceder a sus relaciones
+            act_fresh = db.query(Quote).get(act_host_selection.id)
+            
             rate = get_active_rate(db)
-            # Buscamos la OI de la actividad automáticamente
-            oi_linked = act_host.oi if act_host.oi else (act_host.quote.oi if act_host.quote else None)
-            # Fallback simple: toma la primera OI si no está linkeada (debería estarlo)
-            oi_id = act_host.oi_id if act_host.oi_id else db.query(OI).first().id 
+            
+            # Buscar OI: Prioridad 1: OI de la actividad. Prioridad 2: Primera OI (Fallback)
+            oi_id_final = act_fresh.oi_id if act_fresh.oi_id else db.query(OI).first().id 
 
             new_exp = Expense(
                 date=datetime.date.today(), year=datetime.date.today().year, month=datetime.date.today().month,
-                mall_id=act_host.mall_id, oi_id=oi_id, quote_id=act_host.id,
+                mall_id=act_fresh.mall_id, 
+                oi_id=oi_id_final, 
+                quote_id=act_fresh.id,
                 category="HOST", description=f"Recibo Host {prov_host.name}",
                 amount_gtq=total_host, amount_usd=total_host/rate,
                 company_id=prov_host.id,
@@ -204,21 +211,20 @@ with tab_host:
             db.add(new_exp)
             db.commit()
             
-            # --- GENERACIÓN PDF (ReportLab) ---
+            # --- GENERACIÓN PDF ---
             buffer = io.BytesIO()
             p = canvas.Canvas(buffer, pagesize=LETTER)
             width, height = LETTER
             
-            # Header (Estilo Spectrum Media Negro/Azul)
+            # Header
             p.setFillColor(colors.black)
-            p.rect(0, height-80, width, 80, fill=1) # Fondo negro header
-            
+            p.rect(0, height-80, width, 80, fill=1)
             p.setFillColor(colors.white)
             p.setFont("Helvetica-Bold", 24)
             p.drawString(50, height-50, "spectrum media")
             p.drawString(400, height-50, f"RECIBO #{new_exp.id}")
             
-            # Info Proveedor
+            # Info
             p.setFillColor(colors.black)
             p.setFont("Helvetica-Bold", 12)
             y = height - 120
@@ -269,6 +275,6 @@ with tab_host:
             st.download_button(
                 label="🖨️ Descargar Recibo PDF",
                 data=buffer,
-                file_name=f"Recibo_{prov_host.name}_{act_host.activity_name}.pdf",
+                file_name=f"Recibo_{prov_host.name}_{act_fresh.activity_name}.pdf",
                 mime="application/pdf"
             )
