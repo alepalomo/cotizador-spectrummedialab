@@ -1,0 +1,7 @@
+streamlit
+sqlalchemy
+pandas
+bcrypt
+python-dotenv
+altair
+openpyxl
