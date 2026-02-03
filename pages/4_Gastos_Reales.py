@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import os
 from database import get_db
 from models import Expense, Mall, OI, Company, Quote
 from auth import require_role
@@ -32,7 +33,6 @@ with tab_odc:
         odc_text = c1.text_input("Número de ODC")
         date_odc = c2.date_input("Fecha de Ingreso")
         
-        # OIs
         ois = db.query(OI).filter(OI.is_active==True).all()
         oi_sel = c3.selectbox(
             "OI que registra el gasto", 
@@ -48,7 +48,6 @@ with tab_odc:
         
         desc_odc = st.text_input("Descripción del Gasto")
         
-        # Actividad Vinculada
         acts = get_active_activities()
         act_sel = st.selectbox("Vincular a Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_odc")
         
@@ -151,19 +150,23 @@ with tab_caja:
             df_cc = pd.DataFrame(export_data)
             st.download_button("Descargar CSV Contable", df_cc.to_csv(index=False).encode('utf-8'), "caja_chica.csv", "text/csv")
 
-# --- PESTAÑA 3: HOST (CON FIX DE DETACHED INSTANCE) ---
+# --- PESTAÑA 3: HOST (CON CAMBIOS SOLICITADOS) ---
 with tab_host:
     st.subheader("Generación de Recibos Host")
     
     if "host_rows" not in st.session_state:
         st.session_state["host_rows"] = [{"desc": "", "rate": 0.0, "days": 0}]
 
-    h1, h2 = st.columns(2)
+    # Cabecera
+    h1, h2, h3 = st.columns(3)
     prov_host = h1.selectbox("Proveedor (Host)", provs, format_func=lambda x: x.name, key="prov_host")
     if prov_host:
-        h1.info(f"🏦 {prov_host.bank_name} | No. {prov_host.account_number}")
+        h1.caption(f"Cuenta: {prov_host.account_number}")
     
     act_host_selection = h2.selectbox("Actividad", acts, format_func=lambda x: x.activity_name, key="act_host")
+    
+    # NUEVO CAMPO DE FECHA
+    date_host = h3.date_input("Fecha Recibo", datetime.date.today(), key="date_host")
     
     st.markdown("#### Detalle de Servicios")
     
@@ -189,17 +192,14 @@ with tab_host:
         if not act_host_selection or not prov_host:
             st.error("Faltan datos principales")
         else:
-            # --- FIX: RECARGAR ACTIVIDAD FRESCA DESDE LA BD ---
-            # Esto evita el error "DetachedInstanceError" al acceder a sus relaciones
+            # FIX: Evitar DetachedInstanceError
             act_fresh = db.query(Quote).get(act_host_selection.id)
             
             rate = get_active_rate(db)
-            
-            # Buscar OI: Prioridad 1: OI de la actividad. Prioridad 2: Primera OI (Fallback)
             oi_id_final = act_fresh.oi_id if act_fresh.oi_id else db.query(OI).first().id 
 
             new_exp = Expense(
-                date=datetime.date.today(), year=datetime.date.today().year, month=datetime.date.today().month,
+                date=date_host, year=date_host.year, month=date_host.month,
                 mall_id=act_fresh.mall_id, 
                 oi_id=oi_id_final, 
                 quote_id=act_fresh.id,
@@ -216,18 +216,38 @@ with tab_host:
             p = canvas.Canvas(buffer, pagesize=LETTER)
             width, height = LETTER
             
-            # Header
-            p.setFillColor(colors.black)
-            p.rect(0, height-80, width, 80, fill=1)
+            # ID FORMATEADO (00001)
+            recibo_id_str = f"{new_exp.id:05d}"
+            
+            # 1. HEADER (IMAGEN)
+            # Intentamos cargar la imagen, si falla usamos rectángulo negro como respaldo
+            header_img_path = "header_spectrummedia.png"
+            if os.path.exists(header_img_path):
+                # Ajusta las coordenadas y tamaño según tu imagen real
+                # (x, y, width, height) - asumiendo que la imagen es un banner
+                p.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
+            else:
+                p.setFillColor(colors.black)
+                p.rect(0, height-80, width, 80, fill=1)
+                p.setFillColor(colors.white)
+                p.setFont("Helvetica-Bold", 24)
+                p.drawString(50, height-50, "spectrum media")
+            
+            # 2. TEXTO SOBRE EL HEADER (Si usas imagen, asegúrate de que no tape esto o ajusta colores)
             p.setFillColor(colors.white)
-            p.setFont("Helvetica-Bold", 24)
-            p.drawString(50, height-50, "spectrum media")
-            p.drawString(400, height-50, f"RECIBO #{new_exp.id}")
+            p.setFont("Helvetica-Bold", 18)
+            # Si usas imagen, quizás quieras mover esto o cambiarlo de color.
+            # Aquí lo pongo en blanco asumiendo fondo oscuro, o lo muevo abajo si prefieres.
+            p.drawRightString(width - 50, height - 50, f"RECIBO #{recibo_id_str}")
             
             # Info
             p.setFillColor(colors.black)
             p.setFont("Helvetica-Bold", 12)
-            y = height - 120
+            y = height - 130
+            
+            # Fecha (NUEVO)
+            p.drawString(400, y, f"FECHA: {date_host.strftime('%d/%m/%Y')}")
+            
             p.drawString(50, y, "RECIBO DE: SPECTRUM MEDIA LAB")
             p.drawString(50, y-20, f"RECIBO PARA: {prov_host.name.upper()}")
             
@@ -271,10 +291,38 @@ with tab_host:
             p.save()
             buffer.seek(0)
             
-            st.success("Gasto Guardado")
+            st.success(f"Recibo #{recibo_id_str} Guardado")
             st.download_button(
                 label="🖨️ Descargar Recibo PDF",
                 data=buffer,
-                file_name=f"Recibo_{prov_host.name}_{act_fresh.activity_name}.pdf",
+                file_name=f"Recibo_{recibo_id_str}_{prov_host.name}.pdf",
                 mime="application/pdf"
             )
+    
+    # --- SECCIÓN DE DESCARGA DE REPORTE (NUEVO) ---
+    st.divider()
+    st.markdown("⬇️ **Historial de Recibos Generados**")
+    
+    col_d1, col_d2 = st.columns(2)
+    start_d_host = col_d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_host")
+    end_d_host = col_d2.date_input("Hasta", datetime.date.today(), key="d2_host")
+    
+    if st.button("Generar Reporte Recibos (CSV)"):
+        # Filtramos solo categoría HOST
+        data_h = db.query(Expense).filter(Expense.category=="HOST", Expense.date >= start_d_host, Expense.date <= end_d_host).all()
+        
+        if data_h:
+            export_data = []
+            for e in data_h:
+                export_data.append({
+                    "ID Recibo": f"{e.id:05d}", # Formato 00001
+                    "Fecha": e.date,
+                    "Proveedor": e.company.name if e.company else "",
+                    "Monto Q": e.amount_gtq,
+                    "Actividad": e.quote.activity_name,
+                    "Mall": e.mall.name
+                })
+            df_h = pd.DataFrame(export_data)
+            st.download_button("Descargar CSV Recibos", df_h.to_csv(index=False).encode('utf-8'), "reporte_recibos_host.csv", "text/csv")
+        else:
+            st.warning("No se encontraron recibos en ese rango de fechas.")
