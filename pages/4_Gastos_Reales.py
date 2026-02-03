@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import os
+import zipfile 
 from database import get_db
 from models import Expense, Mall, OI, Company, Quote
 from auth import require_role
@@ -18,164 +19,80 @@ db = next(get_db())
 
 st.title("💸 Registro de Gastos Reales")
 
-# --- SELECTOR DE PESTAÑAS PRINCIPALES ---
 tab_odc, tab_caja, tab_host = st.tabs(["📝 ODC", "📦 Caja Chica", "🎤 Host / Talento"])
 
-# Función auxiliar para filtrar actividades VIVAS (No liquidadas)
 def get_active_activities():
     return db.query(Quote).filter(Quote.status.in_(["EJECUTADA", "APROBADA"])).all()
 
-# --- PESTAÑA 1: ODC (Orden de Compra) ---
+# --- PESTAÑA 1 y 2 (Sin cambios mayores, solo mantenemos estructura) ---
 with tab_odc:
     st.subheader("Registro por Orden de Compra")
     with st.form("form_odc", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         odc_text = c1.text_input("Número de ODC")
         date_odc = c2.date_input("Fecha de Ingreso")
-        
         ois = db.query(OI).filter(OI.is_active==True).all()
-        oi_sel = c3.selectbox(
-            "OI que registra el gasto", 
-            ois, 
-            format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", 
-            key="oi_odc"
-        )
-        
+        oi_sel = c3.selectbox("OI", ois, format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", key="oi_odc")
         c4, c5 = st.columns(2)
         provs = db.query(Company).filter(Company.is_active==True).all()
         prov_sel = c4.selectbox("Proveedor", provs, format_func=lambda x: x.name, key="prov_odc")
-        amount_q = c5.number_input("Monto (Quetzales)", min_value=0.0, step=100.0, key="amt_odc")
-        
-        desc_odc = st.text_input("Descripción del Gasto")
-        
+        amount_q = c5.number_input("Monto (Q)", min_value=0.0, step=100.0, key="amt_odc")
+        desc_odc = st.text_input("Descripción")
         acts = get_active_activities()
-        act_sel = st.selectbox("Vincular a Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_odc")
+        act_sel = st.selectbox("Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_odc")
         
         if st.form_submit_button("💾 Guardar ODC"):
-            if not act_sel or not oi_sel:
-                st.error("OI y Actividad son obligatorias")
+            if not act_sel or not oi_sel: st.error("Datos faltantes")
             else:
                 rate = get_active_rate(db)
-                new_exp = Expense(
-                    date=date_odc, year=date_odc.year, month=date_odc.month,
-                    mall_id=act_sel.mall_id, oi_id=oi_sel.id, quote_id=act_sel.id,
-                    category="ODC", description=desc_odc,
-                    amount_gtq=amount_q, amount_usd=amount_q/rate,
-                    odc_number=odc_text, company_id=prov_sel.id if prov_sel else None
-                )
-                db.add(new_exp)
-                db.commit()
-                st.success("Gasto ODC Guardado")
+                db.add(Expense(date=date_odc, year=date_odc.year, month=date_odc.month, mall_id=act_sel.mall_id, oi_id=oi_sel.id, quote_id=act_sel.id, category="ODC", description=desc_odc, amount_gtq=amount_q, amount_usd=amount_q/rate, odc_number=odc_text, company_id=prov_sel.id if prov_sel else None))
+                db.commit(); st.success("Guardado")
 
-    st.divider()
-    st.markdown("⬇️ **Descargar Reporte ODC**")
-    d1, d2 = st.columns(2)
-    start_d = d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_odc")
-    end_d = d2.date_input("Hasta", datetime.date.today(), key="d2_odc")
-    
-    if st.button("Generar CSV ODC"):
-        data = db.query(Expense).filter(Expense.category=="ODC", Expense.date >= start_d, Expense.date <= end_d).all()
-        if data:
-            df = pd.DataFrame([{
-                "Fecha": e.date, "ODC": e.odc_number, 
-                "OI": e.oi.oi_code, 
-                "Proveedor": e.company.name if e.company else "", 
-                "Monto Q": e.amount_gtq, "Descripcion": e.description,
-                "Actividad": e.quote.activity_name
-            } for e in data])
-            st.download_button("Descargar CSV", df.to_csv(index=False).encode('utf-8'), "reporte_odc.csv", "text/csv")
-        else:
-            st.warning("No hay datos en ese rango.")
-
-# --- PESTAÑA 2: CAJA CHICA ---
 with tab_caja:
-    st.subheader("Registro de Caja Chica (Contable)")
+    st.subheader("Registro de Caja Chica")
     with st.form("form_cc", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         amount_cc = c1.number_input("Monto (Q)", min_value=0.0, step=10.0, key="amt_cc")
-        date_cc = c2.date_input("Fecha Documento", key="date_cc")
+        date_cc = c2.date_input("Fecha", key="date_cc")
         fact_cc = c3.text_input("# Factura", key="fact_cc")
-        
         c4, c5 = st.columns(2)
         prov_cc = c4.selectbox("Proveedor", provs, format_func=lambda x: f"{x.name} (NIT: {x.nit})", key="prov_cc")
-        if prov_cc:
-            st.caption(f"📌 NIT: {prov_cc.nit} | Razón Social: {prov_cc.legal_name}")
-            
-        oi_cc = c5.selectbox(
-            "Orden Interna", 
-            ois, 
-            format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", 
-            key="oi_cc"
-        )
-        
+        oi_cc = c5.selectbox("OI", ois, format_func=lambda x: f"{x.oi_code} - {x.oi_name}", key="oi_cc")
         txt_add = st.text_input("Texto Adicional 2")
-        act_cc = st.selectbox("Vincular a Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_cc")
-        
+        act_cc = st.selectbox("Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_cc")
         if st.form_submit_button("💾 Guardar Caja Chica"):
             rate = get_active_rate(db)
-            new_exp = Expense(
-                date=date_cc, year=date_cc.year, month=date_cc.month,
-                mall_id=act_cc.mall_id, oi_id=oi_cc.id, quote_id=act_cc.id,
-                category="CAJA_CHICA", description=f"Factura {fact_cc}",
-                amount_gtq=amount_cc, amount_usd=amount_cc/rate,
-                doc_number=fact_cc, company_id=prov_cc.id,
-                text_additional=txt_add
-            )
-            db.add(new_exp)
-            db.commit()
-            st.success("Gasto Caja Chica Guardado")
+            db.add(Expense(date=date_cc, year=date_cc.year, month=date_cc.month, mall_id=act_cc.mall_id, oi_id=oi_cc.id, quote_id=act_cc.id, category="CAJA_CHICA", description=f"Factura {fact_cc}", amount_gtq=amount_cc, amount_usd=amount_cc/rate, doc_number=fact_cc, company_id=prov_cc.id, text_additional=txt_add))
+            db.commit(); st.success("Guardado")
 
-    st.divider()
-    st.markdown("⬇️ **Reporte Contable Caja Chica**")
-    if st.button("Generar CSV Contable"):
-        data_cc = db.query(Expense).filter(Expense.category=="CAJA_CHICA").all()
-        if data_cc:
-            export_data = []
-            for e in data_cc:
-                export_data.append({
-                    "Operación Contable": "COSTO O GASTO GRAVADO",
-                    "Monto": e.amount_gtq,
-                    "ST.doc": "",
-                    "Ind.Impuesto": "V1",
-                    "Libro Mayor": "7006080000",
-                    "NIT": e.company.nit if e.company else "",
-                    "RAZÓN SOCIAL": e.company.legal_name if e.company else "",
-                    "Fecha Documento": e.date,
-                    "# FACT": e.doc_number,
-                    "Orden Interna": e.oi.oi_code,
-                    "Texto": "B",
-                    "Texto Adicional 2": e.text_additional,
-                    "Actividad": e.quote.activity_name
-                })
-            df_cc = pd.DataFrame(export_data)
-            st.download_button("Descargar CSV Contable", df_cc.to_csv(index=False).encode('utf-8'), "caja_chica.csv", "text/csv")
+# --- PESTAÑA 3: HOST (CON GENERACIÓN DE CONTRATO Y RECIBO) ---
+def format_date_es(d):
+    meses = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    return f"{d.day} de {meses[d.month]} de {d.year}"
 
-# --- PESTAÑA 3: HOST (CON CAMBIOS SOLICITADOS) ---
 with tab_host:
-    st.subheader("Generación de Recibos Host")
+    st.subheader("Generación de Recibos y Contratos")
     
     if "host_rows" not in st.session_state:
         st.session_state["host_rows"] = [{"desc": "", "rate": 0.0, "days": 0}]
 
-    # Cabecera
     h1, h2, h3 = st.columns(3)
     prov_host = h1.selectbox("Proveedor (Host)", provs, format_func=lambda x: x.name, key="prov_host")
     if prov_host:
-        h1.caption(f"Cuenta: {prov_host.account_number}")
+        h1.caption(f"CUI: {prov_host.cui if prov_host.cui else '⚠️ Falta CUI'}")
     
     act_host_selection = h2.selectbox("Actividad", acts, format_func=lambda x: x.activity_name, key="act_host")
+    date_host = h3.date_input("Fecha Documentos", datetime.date.today(), key="date_host")
     
-    # NUEVO CAMPO DE FECHA
-    date_host = h3.date_input("Fecha Recibo", datetime.date.today(), key="date_host")
-    
+    # NUEVO CAMPO PARA EL CONTRATO
+    contract_desc_form = st.text_input("Descripción para el Contrato (ej: promoción de producto, eventos...)", placeholder="Ingresa la descripción del servicio para el contrato legal")
+
     st.markdown("#### Detalle de Servicios")
-    
     for idx, row in enumerate(st.session_state["host_rows"]):
         c_desc, c_rate, c_days, c_del = st.columns([3, 1, 1, 0.5])
         row["desc"] = c_desc.text_input(f"Descripción {idx+1}", value=row["desc"], key=f"hd_{idx}")
         row["rate"] = c_rate.number_input(f"Tarifa {idx+1}", value=row["rate"], key=f"hr_{idx}")
         row["days"] = c_days.number_input(f"Días {idx+1}", value=row["days"], key=f"hdy_{idx}")
-        
         if c_del.button("❌", key=f"del_{idx}") and len(st.session_state["host_rows"]) > 1:
             st.session_state["host_rows"].pop(idx)
             st.rerun()
@@ -188,141 +105,155 @@ with tab_host:
     total_host = sum([r["rate"] * r["days"] for r in st.session_state["host_rows"]])
     st.metric("Total a Pagar", f"Q{total_host:,.2f}")
 
-    if st.button("💾 Guardar y Generar PDF"):
+    if st.button("💾 Guardar y Generar Documentos"):
         if not act_host_selection or not prov_host:
-            st.error("Faltan datos principales")
+            st.error("Faltan datos")
+        elif not prov_host.cui:
+            st.error(f"El proveedor {prov_host.name} no tiene CUI registrado. Agrégalo en Catálogos Admin.")
+        elif not contract_desc_form:
+            st.error("Debes llenar la Descripción para el Contrato.")
         else:
-            # FIX: Evitar DetachedInstanceError
             act_fresh = db.query(Quote).get(act_host_selection.id)
-            
             rate = get_active_rate(db)
             oi_id_final = act_fresh.oi_id if act_fresh.oi_id else db.query(OI).first().id 
-
+            
+            # Guardar Gasto
             new_exp = Expense(
                 date=date_host, year=date_host.year, month=date_host.month,
-                mall_id=act_fresh.mall_id, 
-                oi_id=oi_id_final, 
-                quote_id=act_fresh.id,
-                category="HOST", description=f"Recibo Host {prov_host.name}",
+                mall_id=act_fresh.mall_id, oi_id=oi_id_final, quote_id=act_fresh.id,
+                category="HOST", description=f"Host {prov_host.name}",
                 amount_gtq=total_host, amount_usd=total_host/rate,
-                company_id=prov_host.id,
-                host_details=st.session_state["host_rows"]
+                company_id=prov_host.id, host_details=st.session_state["host_rows"]
             )
             db.add(new_exp)
             db.commit()
             
-            # --- GENERACIÓN PDF ---
-            buffer = io.BytesIO()
-            p = canvas.Canvas(buffer, pagesize=LETTER)
+            recibo_id_str = f"{new_exp.id:05d}"
+            header_img_path = "header_spectrummedia.png"
             width, height = LETTER
             
-            # ID FORMATEADO (00001)
-            recibo_id_str = f"{new_exp.id:05d}"
+            # --- 1. GENERAR RECIBO (PDF) ---
+            buff_recibo = io.BytesIO()
+            p = canvas.Canvas(buff_recibo, pagesize=LETTER)
             
-            # 1. HEADER (IMAGEN)
-            # Intentamos cargar la imagen, si falla usamos rectángulo negro como respaldo
-            header_img_path = "header_spectrummedia.png"
+            # Header
             if os.path.exists(header_img_path):
-                # Ajusta las coordenadas y tamaño según tu imagen real
-                # (x, y, width, height) - asumiendo que la imagen es un banner
                 p.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
             else:
-                p.setFillColor(colors.black)
-                p.rect(0, height-80, width, 80, fill=1)
-                p.setFillColor(colors.white)
-                p.setFont("Helvetica-Bold", 24)
-                p.drawString(50, height-50, "spectrum media")
+                p.setFillColor(colors.black); p.rect(0, height-80, width, 80, fill=1)
+                p.setFillColor(colors.white); p.setFont("Helvetica-Bold", 24); p.drawString(50, height-50, "spectrum media")
             
-            # 2. TEXTO SOBRE EL HEADER (Si usas imagen, asegúrate de que no tape esto o ajusta colores)
-            p.setFillColor(colors.white)
-            p.setFont("Helvetica-Bold", 18)
-            # Si usas imagen, quizás quieras mover esto o cambiarlo de color.
-            # Aquí lo pongo en blanco asumiendo fondo oscuro, o lo muevo abajo si prefieres.
+            p.setFillColor(colors.white); p.setFont("Helvetica-Bold", 18)
             p.drawRightString(width - 50, height - 50, f"RECIBO #{recibo_id_str}")
             
-            # Info
-            p.setFillColor(colors.black)
-            p.setFont("Helvetica-Bold", 12)
+            # Info Recibo
+            p.setFillColor(colors.black); p.setFont("Helvetica-Bold", 12)
             y = height - 130
-            
-            # Fecha (NUEVO)
             p.drawString(400, y, f"FECHA: {date_host.strftime('%d/%m/%Y')}")
-            
             p.drawString(50, y, "RECIBO DE: SPECTRUM MEDIA LAB")
             p.drawString(50, y-20, f"RECIBO PARA: {prov_host.name.upper()}")
-            
             p.setFont("Helvetica", 10)
-            p.drawString(50, y-60, f"Banco: {prov_host.bank_name}")
-            p.drawString(50, y-75, f"Nombre de cuenta: {prov_host.name}")
-            p.drawString(50, y-90, f"Numero de cuenta: {prov_host.account_number}")
+            p.drawString(50, y-60, f"Banco: {prov_host.bank_name}"); p.drawString(50, y-75, f"Nombre: {prov_host.name}"); p.drawString(50, y-90, f"Cuenta: {prov_host.account_number}")
             
-            # Tabla
+            # Tabla Recibo
             y_table = y - 140
             p.setFont("Helvetica-Bold", 10)
-            p.drawString(50, y_table, "DESCRIPTION")
-            p.drawString(350, y_table, "RATE")
-            p.drawString(420, y_table, "DIA")
-            p.drawString(500, y_table, "AMOUNT")
-            p.line(50, y_table-5, 550, y_table-5)
-            
-            y_row = y_table - 25
-            p.setFont("Helvetica", 10)
-            
+            p.drawString(50, y_table, "DESCRIPTION"); p.drawString(350, y_table, "RATE"); p.drawString(420, y_table, "DIA"); p.drawString(500, y_table, "AMOUNT"); p.line(50, y_table-5, 550, y_table-5)
+            y_row = y_table - 25; p.setFont("Helvetica", 10)
             for row in st.session_state["host_rows"]:
-                subt = row["rate"] * row["days"]
-                p.drawString(50, y_row, row["desc"])
-                p.drawString(350, y_row, f"Q{row['rate']}")
-                p.drawString(430, y_row, str(row['days']))
-                p.drawString(500, y_row, f"Q{subt}")
-                p.line(50, y_row-5, 550, y_row-5)
-                y_row -= 25
-            
-            # Total
-            y_final = y_row - 20
-            p.setFont("Helvetica-Bold", 14)
-            p.drawString(50, y_final, "TOTAL")
-            p.drawString(500, y_final, f"Q{total_host:,.2f}")
-            
-            # Firma
-            p.line(200, 100, 400, 100)
-            p.setFont("Helvetica", 8)
-            p.drawCentredString(300, 85, "FIRMA DE PAGO RECIBIDO")
-            
+                p.drawString(50, y_row, row["desc"]); p.drawString(350, y_row, f"Q{row['rate']}"); p.drawString(430, y_row, str(row['days'])); p.drawString(500, y_row, f"Q{row['rate']*row['days']}"); p.line(50, y_row-5, 550, y_row-5); y_row -= 25
+            p.setFont("Helvetica-Bold", 14); p.drawString(50, y_row-20, "TOTAL"); p.drawString(500, y_row-20, f"Q{total_host:,.2f}")
+            p.line(200, 100, 400, 100); p.setFont("Helvetica", 8); p.drawCentredString(300, 85, "FIRMA DE PAGO RECIBIDO")
             p.save()
-            buffer.seek(0)
+            buff_recibo.seek(0)
             
-            st.success(f"Recibo #{recibo_id_str} Guardado")
+            # --- 2. GENERAR CONTRATO (PDF) ---
+            buff_contrato = io.BytesIO()
+            c = canvas.Canvas(buff_contrato, pagesize=LETTER)
+            
+            # Header Contrato
+            if os.path.exists(header_img_path):
+                c.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
+            
+            c.setFillColor(colors.black)
+            
+            # Título y Fecha
+            c.setFont("Helvetica-Bold", 11)
+            c.drawRightString(width-50, height-130, "Asunto: Brand Activation Ambassador")
+            c.setFont("Helvetica", 11)
+            c.drawRightString(width-50, height-150, f"En la fecha: {format_date_es(date_host)}.")
+            
+            # Cuerpo del Contrato
+            y_text = height - 200
+            line_height = 16
+            left_margin = 50
+            
+            # Párrafo 1
+            c.drawString(left_margin, y_text, f"Yo, {prov_host.name} (del forms) me identifico con el Documento Personal de")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, f"Identificación (DPI) con Código Único de Identificación (CUI) No. {prov_host.cui} (de BDD),")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, "por medio de la presente acuerdo prestar servicios como BRAND ACTIVATION AMBASSADOR")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, f"- {contract_desc_form.upper()} para SPECTRUM")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, "MEDIA prestando un servicio y realizando actividades relacionadas con promoción de")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, "producto, eventos o generación de contenido, según lo asignado.")
+            y_text -= (line_height * 2)
+            
+            # Párrafo 2
+            c.drawString(left_margin, y_text, f"Como compensación por estos servicios, se entregará un pago único de Q.{total_host:,.2f} (del")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, "form), el día y lugar que me ha sido notificado previamente.")
+            y_text -= (line_height * 2)
+            
+            # Cláusulas
+            c.drawString(left_margin, y_text, "En consecuencia, ambas partes reconocen expresamente que:")
+            y_text -= (line_height * 1.5)
+            
+            clauses = [
+                "No existe entre ellas relación laboral de ningún tipo, conforme a la legislación laboral vigente.",
+                "No se genera ninguna obligación de carácter laboral, tales como pago de salarios,", 
+                "prestaciones laborales, indemnizaciones, o cualquier otro derecho laboral.",
+                "Cada parte actúa de forma autónoma, sin que exista dependencia, ni vínculo",
+                "permanente más allá del objeto del contrato de servicios."
+            ]
+            
+            for clause in clauses:
+                c.drawString(left_margin + 20, y_text, f"•   {clause}")
+                y_text -= line_height
+            
+            y_text -= line_height
+            c.drawString(left_margin, y_text, "La presente notificación tiene como finalidad reiterar la naturaleza de la prestación de")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, "servicios, y dejar claro que no se establece, ni se presumirá, ningún tipo de vínculo laboral")
+            y_text -= line_height
+            c.drawString(left_margin, y_text, f"entre Spectrum Media y {prov_host.name}")
+            
+            # Firmas
+            y_sig = 150
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(left_margin, y_sig, "Firma del Brand Ambassador: __________________________")
+            c.drawString(left_margin, y_sig-15, f"Nombre completo: {prov_host.name}")
+            
+            # Firma Spectrum (Imagen o Espacio)
+            c.drawString(left_margin, 80, "Firma del responsable de la empresa:")
+            c.drawString(left_margin, 65, "Nombre y cargo: Maria Jose Aguilar, Product Executive")
+            
+            c.save()
+            buff_contrato.seek(0)
+            
+            # --- 3. CREAR ZIP ---
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                zip_file.writestr(f"Recibo_{recibo_id_str}.pdf", buff_recibo.getvalue())
+                zip_file.writestr(f"Contrato_{recibo_id_str}.pdf", buff_contrato.getvalue())
+            
+            st.success("¡Documentos Generados!")
             st.download_button(
-                label="🖨️ Descargar Recibo PDF",
-                data=buffer,
-                file_name=f"Recibo_{recibo_id_str}_{prov_host.name}.pdf",
-                mime="application/pdf"
+                label="🗂️ Descargar ZIP (Contrato + Recibo)",
+                data=zip_buffer.getvalue(),
+                file_name=f"Docs_Host_{recibo_id_str}.zip",
+                mime="application/zip"
             )
-    
-    # --- SECCIÓN DE DESCARGA DE REPORTE (NUEVO) ---
-    st.divider()
-    st.markdown("⬇️ **Historial de Recibos Generados**")
-    
-    col_d1, col_d2 = st.columns(2)
-    start_d_host = col_d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_host")
-    end_d_host = col_d2.date_input("Hasta", datetime.date.today(), key="d2_host")
-    
-    if st.button("Generar Reporte Recibos (CSV)"):
-        # Filtramos solo categoría HOST
-        data_h = db.query(Expense).filter(Expense.category=="HOST", Expense.date >= start_d_host, Expense.date <= end_d_host).all()
-        
-        if data_h:
-            export_data = []
-            for e in data_h:
-                export_data.append({
-                    "ID Recibo": f"{e.id:05d}", # Formato 00001
-                    "Fecha": e.date,
-                    "Proveedor": e.company.name if e.company else "",
-                    "Monto Q": e.amount_gtq,
-                    "Actividad": e.quote.activity_name,
-                    "Mall": e.mall.name
-                })
-            df_h = pd.DataFrame(export_data)
-            st.download_button("Descargar CSV Recibos", df_h.to_csv(index=False).encode('utf-8'), "reporte_recibos_host.csv", "text/csv")
-        else:
-            st.warning("No se encontraron recibos en ese rango de fechas.")

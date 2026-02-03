@@ -137,6 +137,10 @@ with tab5:
             p_type = c3.selectbox("Tipo", ["Certificado", "Directo"])
             nit = c4.text_input("NIT")
             
+            # NUEVO CAMPO CUI EN EL FORMULARIO
+            c_cui, c_vacio = st.columns(2)
+            cui_val = c_cui.text_input("CUI (DPI)")
+            
             c5, c6 = st.columns(2)
             bank = c5.text_input("Banco")
             acc = c6.text_input("No. de Cuenta")
@@ -146,7 +150,7 @@ with tab5:
                     try:
                         db.add(Company(
                             name=name, legal_name=legal, provider_type=p_type,
-                            nit=nit, bank_name=bank, account_number=acc
+                            nit=nit, bank_name=bank, account_number=acc, cui=cui_val
                         ))
                         db.commit()
                         st.success("Proveedor agregado.")
@@ -169,6 +173,7 @@ with tab5:
                 "legal_name": c.legal_name,
                 "provider_type": c.provider_type,
                 "nit": c.nit,
+                "cui": c.cui, # Mostrar CUI
                 "bank_name": c.bank_name,
                 "account_number": c.account_number
             })
@@ -182,6 +187,7 @@ with tab5:
                 "legal_name": "Razón Social",
                 "provider_type": st.column_config.SelectboxColumn("Tipo", options=["Certificado", "Directo"]),
                 "nit": "NIT",
+                "cui": "CUI (DPI)",
                 "bank_name": "Banco",
                 "account_number": "Cuenta"
             },
