@@ -27,15 +27,25 @@ tab_odc, tab_caja, tab_host = st.tabs(["📝 ODC", "📦 Caja Chica", "🎤 Host
 def get_active_activities():
     return db.query(Quote).filter(Quote.status.in_(["EJECUTADA", "APROBADA"])).all()
 
-# --- PESTAÑA 1: ODC (Orden de Compra) ---
+# ==============================================================================
+# 1. PESTAÑA ODC (CON DESCARGABLE)
+# ==============================================================================
 with tab_odc:
     st.subheader("Registro por Orden de Compra")
     with st.form("form_odc", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         odc_text = c1.text_input("Número de ODC")
         date_odc = c2.date_input("Fecha de Ingreso")
+        
+        # Selector OI con Mall
         ois = db.query(OI).filter(OI.is_active==True).all()
-        oi_sel = c3.selectbox("OI", ois, format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", key="oi_odc")
+        oi_sel = c3.selectbox(
+            "OI que registra el gasto", 
+            ois, 
+            format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", 
+            key="oi_odc"
+        )
+        
         c4, c5 = st.columns(2)
         provs = db.query(Company).filter(Company.is_active==True).all()
         prov_sel = c4.selectbox("Proveedor", provs, format_func=lambda x: x.name, key="prov_odc")
@@ -51,7 +61,30 @@ with tab_odc:
                 db.add(Expense(date=date_odc, year=date_odc.year, month=date_odc.month, mall_id=act_sel.mall_id, oi_id=oi_sel.id, quote_id=act_sel.id, category="ODC", description=desc_odc, amount_gtq=amount_q, amount_usd=amount_q/rate, odc_number=odc_text, company_id=prov_sel.id if prov_sel else None))
                 db.commit(); st.success("Guardado")
 
-# --- PESTAÑA 2: CAJA CHICA ---
+    # --- DESCARGABLE ODC (RESTAURADO) ---
+    st.divider()
+    st.markdown("⬇️ **Descargar Reporte ODC**")
+    d1, d2 = st.columns(2)
+    start_d = d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_odc")
+    end_d = d2.date_input("Hasta", datetime.date.today(), key="d2_odc")
+    
+    if st.button("Generar CSV ODC"):
+        data = db.query(Expense).filter(Expense.category=="ODC", Expense.date >= start_d, Expense.date <= end_d).all()
+        if data:
+            df = pd.DataFrame([{
+                "Fecha": e.date, "ODC": e.odc_number, 
+                "OI": e.oi.oi_code, 
+                "Proveedor": e.company.name if e.company else "", 
+                "Monto Q": e.amount_gtq, "Descripcion": e.description,
+                "Actividad": e.quote.activity_name
+            } for e in data])
+            st.download_button("Descargar CSV", df.to_csv(index=False).encode('utf-8'), "reporte_odc.csv", "text/csv")
+        else:
+            st.warning("No hay datos en ese rango.")
+
+# ==============================================================================
+# 2. PESTAÑA CAJA CHICA (CON SELECTOR CORREGIDO Y REPORTE CONTABLE)
+# ==============================================================================
 with tab_caja:
     st.subheader("Registro de Caja Chica")
     with st.form("form_cc", clear_on_submit=True):
@@ -59,17 +92,56 @@ with tab_caja:
         amount_cc = c1.number_input("Monto (Q)", min_value=0.0, step=10.0, key="amt_cc")
         date_cc = c2.date_input("Fecha", key="date_cc")
         fact_cc = c3.text_input("# Factura", key="fact_cc")
+        
         c4, c5 = st.columns(2)
         prov_cc = c4.selectbox("Proveedor", provs, format_func=lambda x: f"{x.name} (NIT: {x.nit})", key="prov_cc")
-        oi_cc = c5.selectbox("OI", ois, format_func=lambda x: f"{x.oi_code} - {x.oi_name}", key="oi_cc")
+        
+        # --- CORRECCIÓN: SELECTOR OI CON MALL ---
+        oi_cc = c5.selectbox(
+            "OI (Cuenta)", 
+            ois, 
+            format_func=lambda x: f"{x.oi_code} - {x.oi_name} ({x.mall.name if x.mall else 'Sin Mall'})", 
+            key="oi_cc"
+        )
+        
         txt_add = st.text_input("Texto Adicional 2")
         act_cc = st.selectbox("Actividad", acts, format_func=lambda x: f"#{x.id} {x.activity_name}", key="act_cc")
+        
         if st.form_submit_button("💾 Guardar Caja Chica"):
             rate = get_active_rate(db)
             db.add(Expense(date=date_cc, year=date_cc.year, month=date_cc.month, mall_id=act_cc.mall_id, oi_id=oi_cc.id, quote_id=act_cc.id, category="CAJA_CHICA", description=f"Factura {fact_cc}", amount_gtq=amount_cc, amount_usd=amount_cc/rate, doc_number=fact_cc, company_id=prov_cc.id, text_additional=txt_add))
             db.commit(); st.success("Guardado")
 
-# --- PESTAÑA 3: HOST (CONTRATO JUSTIFICADO Y FIRMAS CENTRADAS) ---
+    # --- DESCARGABLE CONTABLE (RESTAURADO) ---
+    st.divider()
+    st.markdown("⬇️ **Reporte Contable Caja Chica**")
+    if st.button("Generar CSV Contable"):
+        data_cc = db.query(Expense).filter(Expense.category=="CAJA_CHICA").all()
+        if data_cc:
+            export_data = []
+            for e in data_cc:
+                export_data.append({
+                    "Operación Contable": "COSTO O GASTO GRAVADO",
+                    "Monto": e.amount_gtq,
+                    "ST.doc": "",
+                    "Ind.Impuesto": "V1",
+                    "Libro Mayor": "7006080000",
+                    "NIT": e.company.nit if e.company else "",
+                    "RAZÓN SOCIAL": e.company.legal_name if e.company else "",
+                    "Fecha Documento": e.date,
+                    "# FACT": e.doc_number,
+                    "Orden Interna": e.oi.oi_code, # Solo código
+                    "Texto": "B",
+                    "Texto Adicional 2": e.text_additional,
+                    "Actividad": e.quote.activity_name
+                })
+            df_cc = pd.DataFrame(export_data)
+            st.download_button("Descargar CSV Contable", df_cc.to_csv(index=False).encode('utf-8'), "caja_chica_contable.csv", "text/csv")
+
+
+# ==============================================================================
+# 3. PESTAÑA HOST (CONTRATO JUSTIFICADO Y FIRMAS)
+# ==============================================================================
 def format_date_es(d):
     meses = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
     return f"{d.day} de {meses[d.month]} de {d.year}"
@@ -83,7 +155,6 @@ with tab_host:
     h1, h2, h3 = st.columns(3)
     prov_host = h1.selectbox("Proveedor (Host)", provs, format_func=lambda x: x.name, key="prov_host")
     if prov_host:
-        # Usamos getattr por seguridad si la base de datos es vieja
         cui_actual = getattr(prov_host, 'cui', None)
         h1.caption(f"CUI: {cui_actual if cui_actual else '⚠️ Falta CUI'}")
     
@@ -142,7 +213,6 @@ with tab_host:
             buff_recibo = io.BytesIO()
             p = canvas.Canvas(buff_recibo, pagesize=LETTER)
             
-            # Header
             if os.path.exists(header_img_path):
                 p.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
             else:
@@ -152,7 +222,6 @@ with tab_host:
             p.setFillColor(colors.white); p.setFont("Helvetica-Bold", 18)
             p.drawRightString(width - 50, height - 50, f"RECIBO #{recibo_id_str}")
             
-            # Info Recibo
             p.setFillColor(colors.black); p.setFont("Helvetica-Bold", 12)
             y = height - 130
             p.drawString(400, y, f"FECHA: {date_host.strftime('%d/%m/%Y')}")
@@ -161,7 +230,6 @@ with tab_host:
             p.setFont("Helvetica", 10)
             p.drawString(50, y-60, f"Banco: {prov_host.bank_name}"); p.drawString(50, y-75, f"Nombre: {prov_host.name}"); p.drawString(50, y-90, f"Cuenta: {prov_host.account_number}")
             
-            # Tabla
             y_table = y - 140
             p.setFont("Helvetica-Bold", 10)
             p.drawString(50, y_table, "DESCRIPTION"); p.drawString(350, y_table, "RATE"); p.drawString(420, y_table, "DIA"); p.drawString(500, y_table, "AMOUNT"); p.line(50, y_table-5, 550, y_table-5)
@@ -173,27 +241,21 @@ with tab_host:
             p.save()
             buff_recibo.seek(0)
             
-            # --- 2. GENERAR CONTRATO (JUSTIFICADO Y CENTRADO) ---
+            # --- 2. GENERAR CONTRATO ---
             buff_contrato = io.BytesIO()
             c = canvas.Canvas(buff_contrato, pagesize=LETTER)
             
-            # Header
             if os.path.exists(header_img_path):
                 c.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
             
-            # Título y Fecha (Alineados a la derecha)
             styles = getSampleStyleSheet()
             style_right = ParagraphStyle(name='Right', parent=styles['Normal'], alignment=TA_RIGHT, fontSize=11, leading=14)
-            
-            # Usamos Paragraph para poder usar negritas <b> y alineación
             p_asunto = Paragraph(f"<b>Asunto: Brand Activation Ambassador</b><br/><br/>En la fecha: <b>{format_date_es(date_host)}</b>.", style_right)
-            w, h = p_asunto.wrap(width - 100, 100) # Margen 50
+            w, h = p_asunto.wrap(width - 100, 100)
             p_asunto.drawOn(c, 50, height - 160)
             
-            # -- CUERPO JUSTIFICADO --
             style_justify = ParagraphStyle(name='Justify', parent=styles['Normal'], alignment=TA_JUSTIFY, fontSize=11, leading=16, spaceAfter=12)
             
-            # Texto 1
             text_body_1 = f"""
             Yo, <b>{prov_host.name}</b> me identifico con el Documento Personal de Identificación (DPI) 
             con Código Único de Identificación (CUI) No. <b>{cui_val}</b>, por medio de la presente acuerdo 
@@ -201,67 +263,37 @@ with tab_host:
             SPECTRUM MEDIA prestando un servicio y realizando actividades relacionadas con promoción de 
             producto, eventos o generación de contenido, según lo asignado.
             """
-            
-            # Texto 2
-            text_body_2 = f"""
-            Como compensación por estos servicios, se entregará un pago único de <b>Q.{total_host:,.2f}</b>, 
-            el día y lugar que me ha sido notificado previamente.
-            """
-            
-            # Texto 3 (Cláusulas)
+            text_body_2 = f"Como compensación por estos servicios, se entregará un pago único de <b>Q.{total_host:,.2f}</b>, el día y lugar que me ha sido notificado previamente."
             text_body_3 = """
             En consecuencia, ambas partes reconocen expresamente que:<br/>
             • No existe entre ellas relación laboral de ningún tipo, conforme a la legislación laboral vigente.<br/>
             • No se genera ninguna obligación de carácter laboral, tales como pago de salarios, prestaciones laborales, indemnizaciones, o cualquier otro derecho laboral que derive de una relación de trabajo subordinado.<br/>
             • Cada parte actúa de forma autónoma, sin que exista dependencia, ni vínculo permanente más allá del objeto del contrato de servicios.
             """
+            text_body_4 = f"La presente notificación tiene como finalidad reiterar la naturaleza de la prestación de servicios, y dejar claro que no se establece, ni se presumirá, ningún tipo de vínculo laboral entre Spectrum Media y {prov_host.name}."
             
-            # Texto 4 (Cierre)
-            text_body_4 = f"""
-            La presente notificación tiene como finalidad reiterar la naturaleza de la prestación de servicios, 
-            y dejar claro que no se establece, ni se presumirá, ningún tipo de vínculo laboral entre 
-            Spectrum Media y {prov_host.name}.
-            """
-            
-            # Dibujar los párrafos uno tras otro
-            # Comenzamos debajo del asunto
             y_curr = height - 200 
-            
             for txt in [text_body_1, text_body_2, text_body_3, text_body_4]:
                 p = Paragraph(txt, style_justify)
-                w, h = p.wrap(width - 100, height) # 50 px margen cada lado
+                w, h = p.wrap(width - 100, height)
                 p.drawOn(c, 50, y_curr - h)
-                y_curr -= (h + 20) # Espacio entre párrafos
+                y_curr -= (h + 20)
             
-            # -- FIRMAS CENTRADAS --
-            
-            # Calculamos el centro de la página
             center_x = width / 2
-            
-            # Firma 1: Brand Ambassador (Centrada)
             y_sig_1 = y_curr - 60
             c.setLineWidth(1)
-            c.line(center_x - 100, y_sig_1, center_x + 100, y_sig_1) # Línea centrada
-            
+            c.line(center_x - 100, y_sig_1, center_x + 100, y_sig_1)
             style_center = ParagraphStyle(name='Center', parent=styles['Normal'], alignment=TA_CENTER, fontSize=10, leading=12)
             p_sig1 = Paragraph(f"<b>Firma del Brand Ambassador</b><br/>{prov_host.name}", style_center)
             w, h = p_sig1.wrap(200, 50)
             p_sig1.drawOn(c, center_x - 100, y_sig_1 - h - 5)
             
-            # Firma 2: Empresa (Centrada más abajo)
             y_sig_2 = y_sig_1 - 100
-            
-            # -- IMAGEN DE FIRMA (firma.png) --
-            # Intentamos poner la firma sobre la línea
             firma_path = "firma.png"
             if os.path.exists(firma_path):
-                # Ancho deseado de la firma: 120px
-                f_w = 120
-                f_h = 60 # Ajusta según tu imagen
-                # Centramos la imagen en X y la ponemos justo sobre la línea Y
+                f_w = 120; f_h = 60
                 c.drawImage(firma_path, center_x - (f_w/2), y_sig_2, width=f_w, height=f_h, mask='auto', preserveAspectRatio=True)
             
-            # Línea Empresa
             c.line(center_x - 100, y_sig_2, center_x + 100, y_sig_2)
             p_sig2 = Paragraph("<b>Firma del responsable de la empresa:</b><br/>Maria Jose Aguilar, Product Executive", style_center)
             w, h = p_sig2.wrap(200, 50)
@@ -283,3 +315,28 @@ with tab_host:
                 file_name=f"Docs_Host_{recibo_id_str}.zip",
                 mime="application/zip"
             )
+    
+    # --- DESCARGABLE REPORTE HOST (RESTAURADO) ---
+    st.divider()
+    st.markdown("⬇️ **Historial de Recibos Generados**")
+    col_d1, col_d2 = st.columns(2)
+    start_d_host = col_d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_host")
+    end_d_host = col_d2.date_input("Hasta", datetime.date.today(), key="d2_host")
+    
+    if st.button("Generar Reporte Recibos (CSV)"):
+        data_h = db.query(Expense).filter(Expense.category=="HOST", Expense.date >= start_d_host, Expense.date <= end_d_host).all()
+        if data_h:
+            export_data = []
+            for e in data_h:
+                export_data.append({
+                    "ID Recibo": f"{e.id:05d}",
+                    "Fecha": e.date,
+                    "Proveedor": e.company.name if e.company else "",
+                    "Monto Q": e.amount_gtq,
+                    "Actividad": e.quote.activity_name,
+                    "Mall": e.mall.name
+                })
+            df_h = pd.DataFrame(export_data)
+            st.download_button("Descargar CSV Recibos", df_h.to_csv(index=False).encode('utf-8'), "reporte_recibos_host.csv", "text/csv")
+        else:
+            st.warning("No se encontraron recibos en ese rango de fechas.")
