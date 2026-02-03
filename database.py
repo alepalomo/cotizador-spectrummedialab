@@ -2,8 +2,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# CAMBIAMOS A V2 PARA QUE SE CREE LA COLUMNA CUI
-SQLALCHEMY_DATABASE_URL = "sqlite:///./spectrum_v2.db"
+# --- CAMBIO IMPORTANTE: SUBIMOS A v3 ---
+SQLALCHEMY_DATABASE_URL = "sqlite:///./spectrum_v3.db"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
