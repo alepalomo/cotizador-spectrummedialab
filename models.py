@@ -3,6 +3,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Date
 from sqlalchemy.orm import relationship
 from database import Base
 
+# --- USUARIOS ---
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -12,6 +13,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+# --- UBICACIONES ---
 class Mall(Base):
     __tablename__ = "malls"
     id = Column(Integer, primary_key=True, index=True)
@@ -29,6 +31,7 @@ class OI(Base):
     is_active = Column(Boolean, default=True)
     mall = relationship("Mall", back_populates="ois")
 
+# --- PRESUPUESTO ---
 class Budget(Base):
     __tablename__ = "budgets"
     id = Column(Integer, primary_key=True)
@@ -39,6 +42,7 @@ class Budget(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     oi = relationship("OI")
 
+# --- TIPO DE CAMBIO ---
 class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
     id = Column(Integer, primary_key=True)
@@ -47,6 +51,7 @@ class ExchangeRate(Base):
     is_active = Column(Boolean, default=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+# --- ACTIVIDADES ---
 class ActivityType(Base):
     __tablename__ = "activity_types"
     id = Column(Integer, primary_key=True)
@@ -63,6 +68,7 @@ class Insumo(Base):
     billing_mode = Column(String) 
     is_active = Column(Boolean, default=True)
 
+# --- COTIZACIONES (AQUÍ ESTÁ EL ARREGLO) ---
 class Quote(Base):
     __tablename__ = "quotes"
     id = Column(Integer, primary_key=True)
@@ -80,10 +86,13 @@ class Quote(Base):
     final_sale_price_usd = Column(Float, nullable=True)
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # RELACIONES
     creator = relationship("User")
     activity_type = relationship("ActivityType")
     lines = relationship("QuoteLine", back_populates="quote")
     oi = relationship("OI")
+    mall = relationship("Mall") # <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
 
 class QuoteLine(Base):
     __tablename__ = "quote_lines"
@@ -97,6 +106,7 @@ class QuoteLine(Base):
     quote = relationship("Quote", back_populates="lines")
     insumo = relationship("Insumo")
 
+# --- GASTOS ---
 class ExpenseType(Base):
     __tablename__ = "expense_types"
     id = Column(Integer, primary_key=True)
@@ -112,7 +122,7 @@ class Company(Base):
     account_number = Column(String, nullable=True)
     legal_name = Column(String, nullable=True) 
     nit = Column(String, nullable=True)
-    cui = Column(String, nullable=True) # <--- NUEVO CAMPO CUI
+    cui = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
 
 class Expense(Base):
@@ -134,6 +144,7 @@ class Expense(Base):
     host_details = Column(JSON, nullable=True) 
     company_id = Column(Integer, ForeignKey("companies.id"))
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
     mall = relationship("Mall")
     oi = relationship("OI")
     company = relationship("Company")
