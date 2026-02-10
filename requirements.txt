@@ -6,3 +6,4 @@ python-dotenv
 altair
 openpyxl
 reportlab
+psycopg2-binary
