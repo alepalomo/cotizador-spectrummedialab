@@ -255,6 +255,84 @@ with tab4:
 # --- TAB 5: PROVEEDORES ---
 with tab5:
     st.subheader("🏢 Catálogo de Proveedores Detallado")
+
+    st.markdown("### 📤 Carga Masiva de Proveedores")
+    uploaded_provs = st.file_uploader("Subir CSV de Proveedores", type=["csv"], key="csv_provs")
+
+    if uploaded_provs:
+        try:
+            df_prov = pd.read_csv(uploaded_provs)
+            if df_prov.shape[1] < 2:
+                uploaded_provs.seek(0)
+                df_prov = pd.read_csv(uploaded_provs, sep=';')
+        except:
+            st.error("Error leyendo CSV.")
+            st.stop()
+
+        df_prov.columns = [c.lower().strip() for c in df_prov.columns]
+        
+        # MAPEO INTELIGENTE (Español -> Inglés)
+        rename_map = {
+            'nombre': 'name', 'nombre comercial': 'name', 'empresa': 'name', 'proveedor': 'name',
+            'razon social': 'legal_name', 'razón social': 'legal_name',
+            'tipo': 'provider_type', 'categoria': 'provider_type',
+            'nit': 'nit',
+            'cui': 'cui', 'dpi': 'cui',
+            'banco': 'bank_name',
+            'cuenta': 'account_number', 'numero de cuenta': 'account_number'
+        }
+        df_prov.rename(columns=rename_map, inplace=True)
+        
+        st.write("Columnas detectadas:", df_prov.columns.tolist())
+        
+        if 'name' not in df_prov.columns:
+            st.error("❌ Falta la columna 'Nombre Comercial' o 'Empresa'.")
+        else:
+            if st.button("🚀 Procesar Carga Proveedores"):
+                existing_provs = db.query(Company).all()
+                existing_names = {p.name for p in existing_provs}
+                existing_nits = {p.nit for p in existing_provs if p.nit}
+                
+                new_provs = []
+                skipped = 0
+                
+                for index, row in df_prov.iterrows():
+                    name_val = str(row['name']).strip()
+                    
+                    # Limpieza de NIT (quitar guiones si quieres)
+                    nit_val = str(row.get('nit', '')).strip().upper()
+                    if nit_val == "NAN": nit_val = ""
+                    
+                    # Chequeo de duplicados (Nombre O Nit)
+                    if name_val in existing_names or (nit_val and nit_val in existing_nits):
+                        skipped += 1
+                        continue
+                    
+                    # Limpieza de otros campos para que no diga "nan"
+                    def clean(val):
+                        s = str(val).strip()
+                        return "" if s.lower() == "nan" else s
+
+                    new_obj = Company(
+                        name=name_val,
+                        legal_name=clean(row.get('legal_name', '')),
+                        provider_type=clean(row.get('provider_type', 'Directo')),
+                        nit=nit_val,
+                        cui=clean(row.get('cui', '')),
+                        bank_name=clean(row.get('bank_name', '')),
+                        account_number=clean(row.get('account_number', ''))
+                    )
+                    new_provs.append(new_obj)
+                    existing_names.add(name_val)
+                    if nit_val: existing_nits.add(nit_val)
+
+                if new_provs:
+                    db.add_all(new_provs)
+                    db.commit()
+                    st.success(f"✅ Se agregaron {len(new_provs)} nuevos proveedores.")
+                
+                if skipped > 0:
+                    st.warning(f"⚠️ Se omitieron {skipped} proveedores (ya existían por Nombre o NIT).")
     
     with st.expander("➕ Agregar Nuevo Proveedor", expanded=True):
         with st.form("new_prov_form"):
