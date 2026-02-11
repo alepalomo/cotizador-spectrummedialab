@@ -42,7 +42,6 @@ with st.container():
     )
     
     # Lógica para filtrar las actividades disponibles en el selector
-    # Solo mostramos actividades que coincidan con los Malls y Tipos elegidos arriba
     start_filter = datetime.datetime(sel_year, 1, 1)
     end_filter = datetime.datetime(sel_year, 12, 31, 23, 59, 59)
     
@@ -73,74 +72,134 @@ with st.container():
 st.divider()
 
 # ==============================================================================
-# SECCIÓN 1: RENTABILIDAD Y VENTAS
+# SECCIÓN 1: RENTABILIDAD REAL Y CONTROL (NUEVO CÓDIGO)
 # ==============================================================================
-st.header("💰 Análisis de Rentabilidad (Ventas vs. Costos)")
 
-# Construcción de query de ventas basada en MULTI-SELECT
+# --- A. PREPARAR DATA ---
+# 1. Reconstruimos la query de ventas según los filtros
 q_sales = db.query(Quote).filter(
     Quote.status.in_(["APROBADA", "EJECUTADA", "LIQUIDADA"]),
     Quote.created_at >= start_filter,
     Quote.created_at <= end_filter
 )
-
-# Filtro Malls
 if sel_malls:
     q_sales = q_sales.filter(Quote.mall_id.in_([m.id for m in sel_malls]))
-
-# Filtro Tipos
 if sel_types:
     q_sales = q_sales.filter(Quote.activity_type_id.in_([t.id for t in sel_types]))
-
-# Filtro Actividades Específicas
 if sel_quotes:
     q_sales = q_sales.filter(Quote.id.in_([q.id for q in sel_quotes]))
 
 sales_data = q_sales.all()
+ids_quotes_visible = [q.id for q in sales_data]
 
-# Cálculos Totales
-total_venta = sum([q.final_sale_price_usd if q.final_sale_price_usd else 0 for q in sales_data])
-total_costo_cotizado = sum([q.total_cost_usd for q in sales_data])
-utilidad = total_venta - total_costo_cotizado
-margen_pct = (utilidad / total_venta * 100) if total_venta > 0 else 0.0
+# 2. CÁLCULOS
+# Venta Total (Si no hay precio final, usa el sugerido como proyección)
+total_venta_usd = sum([
+    q.final_sale_price_usd if q.final_sale_price_usd else q.suggested_price_usd_m60 
+    for q in sales_data
+])
 
-# KPIs
-k_v1, k_v2, k_v3, k_v4 = st.columns(4)
-k_v1.metric("Venta Total (Selección)", f"${total_venta:,.2f}")
-k_v2.metric("Costo Total (Base)", f"${total_costo_cotizado:,.2f}")
-k_v3.metric("Utilidad $", f"${utilidad:,.2f}", delta_color="normal")
-k_v4.metric("Margen %", f"{margen_pct:.1f}%", delta_color="normal")
+# Costo Presupuestado (Teórico según cotización)
+total_costo_presupuesto_usd = sum([q.total_cost_usd for q in sales_data])
+
+# Gasto Real (Query a BD de gastos asociados a estas cotizaciones)
+if ids_quotes_visible:
+    gastos_reales_list = db.query(Expense).filter(Expense.quote_id.in_(ids_quotes_visible)).all()
+    total_gasto_real_usd = sum([e.amount_usd for e in gastos_reales_list])
+else:
+    total_gasto_real_usd = 0.0
+
+# Utilidades
+utilidad_real_usd = total_venta_usd - total_gasto_real_usd
+variacion_presupuesto = total_costo_presupuesto_usd - total_gasto_real_usd # Positivo = Ahorro
+
+# Margen Real
+if total_venta_usd > 0:
+    margen_real_pct = (utilidad_real_usd / total_venta_usd) * 100
+else:
+    margen_real_pct = 0.0
+
+# --- B. VISUALIZACIÓN ---
+
+# BLOQUE SUPERIOR: RENTABILIDAD REAL (DINERO EN CAJA)
+st.subheader("💰 Rentabilidad Real (Ventas vs. Gastos Reales)")
+col1, col2, col3 = st.columns(3)
+
+col1.metric(
+    "Venta Total", 
+    f"${total_venta_usd:,.2f}",
+    help="Suma de precios de venta finales acordados con cliente."
+)
+
+col2.metric(
+    "Utilidad Real (Cash)", 
+    f"${utilidad_real_usd:,.2f}",
+    delta="Ganancia Líquida",
+    delta_color="normal"
+)
+
+col3.metric(
+    "Margen Real %", 
+    f"{margen_real_pct:.1f}%",
+    delta="Sobre Venta",
+    help="Porcentaje real de ganancia después de pagar facturas reales."
+)
+
+st.write("") # Espaciador visual
+
+# BLOQUE INFERIOR: CONTROL DE EJECUCIÓN (EFICIENCIA)
+st.subheader("📉 Control Presupuestario (Plan vs. Realidad)")
+c_pres, c_real, c_var = st.columns(3)
+
+c_pres.metric(
+    "Presupuesto Costos", 
+    f"${total_costo_presupuesto_usd:,.2f}",
+    help="Lo que se estimó gastar en las cotizaciones (Costo Teórico)."
+)
+
+c_real.metric(
+    "Gasto Ejecutado", 
+    f"${total_gasto_real_usd:,.2f}",
+    delta="Ejecutado",
+    delta_color="off",
+    help="Suma total de facturas y caja chica registradas."
+)
+
+c_var.metric(
+    "Ahorro / Desvío", 
+    f"${variacion_presupuesto:,.2f}",
+    delta="Ahorro" if variacion_presupuesto >= 0 else "Sobre costo",
+    delta_color="normal" if variacion_presupuesto >= 0 else "inverse",
+    help="Diferencia entre lo Presupuestado y lo Real."
+)
 
 st.divider()
 
 # ==============================================================================
-# SECCIÓN 2: EJECUCIÓN PRESUPUESTARIA
+# SECCIÓN 2: EJECUCIÓN PRESUPUESTARIA (OIs Anuales)
 # ==============================================================================
-st.header("📉 Ejecución Presupuestaria (OIs vs Gastos Reales)")
+st.header("📊 Ejecución de Cuentas (OIs)")
 
 rate = get_active_rate(db)
 
 # 1. Obtener Presupuestos (Targets) de OIs Activas
 query_ois = db.query(OI).filter(OI.is_active == True)
 
-# Filtrar OIs por Malls seleccionados
 if sel_malls:
     query_ois = query_ois.filter(OI.mall_id.in_([m.id for m in sel_malls]))
 
 ois = query_ois.all()
 budget_map = {oi.oi_code: oi.annual_budget_usd for oi in ois}
 oi_names = {oi.oi_code: oi.oi_name for oi in ois}
-oi_malls = {oi.oi_code: oi.mall.name if oi.mall else "N/A" for oi in ois} # Mapa para saber el mall
+oi_malls = {oi.oi_code: oi.mall.name if oi.mall else "N/A" for oi in ois}
 
-# 2. Obtener Gastos Reales con Filtros Multi-Select
+# 2. Obtener Gastos Reales con Filtros
 query_exp = db.query(Expense).filter(Expense.year == sel_year)
 
 if sel_malls:
     query_exp = query_exp.filter(Expense.mall_id.in_([m.id for m in sel_malls]))
-
 if sel_types:
     query_exp = query_exp.join(Quote).filter(Quote.activity_type_id.in_([t.id for t in sel_types]))
-
 if sel_quotes:
     query_exp = query_exp.filter(Expense.quote_id.in_([q.id for q in sel_quotes]))
 
@@ -149,13 +208,13 @@ expenses = query_exp.all()
 # --- PROCESAMIENTO DE DATOS ---
 oi_data = {}
 
-# Si NO hay filtro de actividad específica, cargamos todas las OIs del Mall para ver lo disponible vs gastado
+# Carga inicial de estructuras
 if not sel_quotes:
     for code, budget in budget_map.items():
         oi_data[code] = {
             'OI': code,
             'Nombre': oi_names.get(code, ""),
-            'Mall': oi_malls.get(code, ""), # Agregamos el Mall
+            'Mall': oi_malls.get(code, ""),
             'budget_usd': budget,
             'real_usd': 0.0,
             'real_gtq': 0.0
@@ -164,18 +223,15 @@ if not sel_quotes:
 # Sumar Gastos Reales
 for e in expenses:
     code = e.oi.oi_code
-    
-    # Si la OI no estaba (porque filtramos por actividad específica y solo esa debe salir)
     if code not in oi_data:
         oi_data[code] = {
             'OI': code, 
             'Nombre': e.oi.oi_name, 
-            'Mall': e.mall.name if e.mall else "N/A", # Agregamos el Mall
+            'Mall': e.mall.name if e.mall else "N/A",
             'budget_usd': e.oi.annual_budget_usd, 
             'real_usd': 0.0, 
             'real_gtq': 0.0
         }
-    
     oi_data[code]['real_usd'] += e.amount_usd
     oi_data[code]['real_gtq'] += e.amount_gtq
 
@@ -185,28 +241,25 @@ else:
     df = pd.DataFrame(list(oi_data.values()))
     
     # Cálculos
-    df['% Ejecución'] = (df['real_usd'] / df['budget_usd']).fillna(0) * 100
-    df['Disponible USD'] = df['budget_usd'] - df['real_usd']
-
     total_budget = df['budget_usd'].sum()
     total_real = df['real_usd'].sum()
     pct_total = (total_real / total_budget * 100) if total_budget > 0 else 0
     
+    df['% Ejecución'] = (df['real_usd'] / df['budget_usd']).fillna(0) * 100
+    df['Disponible USD'] = df['budget_usd'] - df['real_usd']
+
     # KPIs Ejecución
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Presupuesto Anual (OI)", f"${total_budget:,.0f}")
-    k2.metric("Gasto Real (Ejecutado)", f"${total_real:,.0f}")
-    k3.metric("% Ejecución Anual", f"{pct_total:.1f}%")
-    k4.metric("Disponible Anual", f"${(total_budget - total_real):,.0f}")
+    k1.metric("Presupuesto Anual", f"${total_budget:,.0f}")
+    k2.metric("Gasto Real", f"${total_real:,.0f}")
+    k3.metric("% Ejecución", f"{pct_total:.1f}%")
+    k4.metric("Disponible", f"${(total_budget - total_real):,.0f}")
     
     st.progress(min(pct_total / 100, 1.0))
 
     # GRÁFICA COMPARATIVA
     st.subheader("Comparativa por Cuenta (OI)")
-    
-    # Preparamos datos: OI + Mall para la etiqueta del eje X si se quiere
     df['Etiqueta'] = df['OI'] + " (" + df['Mall'] + ")"
-    
     df_chart = df[['Etiqueta', 'budget_usd', 'real_usd', 'Mall']].melt(['Etiqueta', 'Mall'], var_name='Tipo', value_name='Monto USD')
     
     domain = ['budget_usd', 'real_usd']
@@ -221,7 +274,7 @@ else:
     
     st.altair_chart(chart, use_container_width=True)
 
-    # TABLA DETALLE (CON COLUMNA MALL)
+    # TABLA DETALLE
     with st.expander("Ver Detalle Financiero por OI", expanded=True):
         st.dataframe(
             df[['Mall', 'OI', 'Nombre', 'budget_usd', 'real_usd', '% Ejecución', 'Disponible USD']].style.format({
