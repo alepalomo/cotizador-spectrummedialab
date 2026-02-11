@@ -320,9 +320,77 @@ with tab3:
             n = st.text_input("Nombre"); d = st.text_area("Descripción")
             if st.form_submit_button("Crear"): db.add(ActivityType(name=n, description=d)); db.commit(); st.rerun()
     acts = db.query(ActivityType).all()
-    if acts:
-        ed_a = st.data_editor(pd.DataFrame([{"id": a.id, "name": a.name, "description": a.description} for a in acts]), column_config={"id": st.column_config.NumberColumn(disabled=True, width="small")}, hide_index=True, key="ed_a")
-        if st.button("Guardar Diccionario"): save_changes_generic(ActivityType, ed_a)
+    
+    st.markdown("### ✏️ Editor de Tipos de Actividad")
+    # 1. Cargar datos y guardar IDs originales para detectar borrados
+    types_list = db.query(ActivityType).order_by(ActivityType.id).all()
+    ids_originales_t = {t.id for t in types_list}
+    
+    df_types = pd.DataFrame([
+        {
+            "id": t.id,
+            "name": t.name,
+            "description": t.description
+        } 
+        for t in types_list
+    ])
+
+    # 2. Configurar Editor con num_rows="dynamic" (Activa Agregar/Borrar)
+    col_cfg_types = {
+        "id": st.column_config.NumberColumn(disabled=True, width="small"),
+        "name": st.column_config.TextColumn("Tipo Actividad", required=True, width="medium"),
+        "description": st.column_config.TextColumn("Descripción / Detalles", width="large")
+    }
+
+    edited_types = st.data_editor(
+        df_types,
+        column_config=col_cfg_types,
+        num_rows="dynamic", # <--- ESTO ES LA CLAVE
+        hide_index=True,
+        use_container_width=True,
+        key="editor_types_main"
+    )
+
+    # 3. Guardar Cambios (Lógica inteligente: Crear, Borrar, Actualizar)
+    if st.button("💾 Guardar Cambios (Tipos)"):
+        # A. DETECTAR BORRADOS (Los IDs que ya no están en la tabla)
+        ids_remanentes_t = set(edited_types["id"].dropna().astype(int).tolist())
+        ids_borrar_t = ids_originales_t - ids_remanentes_t
+        
+        d_count = 0
+        if ids_borrar_t:
+            db.query(ActivityType).filter(ActivityType.id.in_(ids_borrar_t)).delete(synchronize_session=False)
+            d_count = len(ids_borrar_t)
+            
+        # B. ACTUALIZAR EXISTENTES Y CREAR NUEVOS
+        u_count = 0
+        n_count = 0
+        
+        for index, row in edited_types.iterrows():
+            # Si tiene ID, actualizamos
+            if pd.notna(row["id"]):
+                t_item = db.query(ActivityType).get(int(row["id"]))
+                if t_item:
+                    t_item.name = row["name"]
+                    t_item.description = row["description"]
+                    u_count += 1
+            # Si NO tiene ID, creamos uno nuevo
+            else:
+                new_t = ActivityType(
+                    name=row["name"],
+                    description=row["description"]
+                )
+                db.add(new_t)
+                n_count += 1
+        
+        db.commit()
+        
+        msg_t = "✅ Procesado: "
+        if d_count: msg_t += f"🗑️ {d_count} borrados. "
+        if n_count: msg_t += f"✨ {n_count} nuevos. "
+        if u_count: msg_t += f"✏️ {u_count} actualizados."
+        st.success(msg_t)
+        st.rerun()
 
 # --- TAB 4: USUARIOS ---
 with tab4:
