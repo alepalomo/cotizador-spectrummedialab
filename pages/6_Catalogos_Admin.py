@@ -36,44 +36,72 @@ with tab1:
     uploaded_insumos = st.file_uploader("Subir CSV de Insumos", type=["csv"], key="csv_insumos")
 
     if uploaded_insumos:
-        df_insumos = pd.read_csv(uploaded_insumos)
-        # Estandarizamos nombres de columnas para evitar errores
+        # INTENTO 1: Leer con coma (Estándar)
+        try:
+            df_insumos = pd.read_csv(uploaded_insumos)
+            # Si detectamos que solo hay 1 columna, probablemente sea punto y coma
+            if df_insumos.shape[1] < 2:
+                uploaded_insumos.seek(0) # Regresar al inicio del archivo
+                df_insumos = pd.read_csv(uploaded_insumos, sep=';')
+        except:
+            st.error("Error leyendo el archivo. Asegúrate que sea un CSV válido.")
+            st.stop()
+
+        # Normalizar columnas (minúsculas y sin espacios)
         df_insumos.columns = [c.lower().strip() for c in df_insumos.columns]
+        
+        # --- MAPEO INTELIGENTE (ESPAÑOL -> INGLÉS) ---
+        # Esto permite que subas archivos con encabezados en español
+        rename_map = {
+            'nombre': 'name', 'insumo': 'name', 'item': 'name',
+            'costo': 'cost_gtq', 'precio': 'cost_gtq', 'cost': 'cost_gtq',
+            'unidad': 'unit_type', 'medida': 'unit_type', 'tipo': 'unit_type',
+            'cobro': 'billing_mode', 'modo': 'billing_mode'
+        }
+        df_insumos.rename(columns=rename_map, inplace=True)
+        
+        st.write("Columnas detectadas:", df_insumos.columns.tolist()) # Para depuración
+        st.dataframe(df_insumos.head())
+        
+        # Verificación de columna obligatoria
+        if 'name' not in df_insumos.columns:
+            st.error("❌ Error: No se encuentra la columna 'Nombre' o 'Name'. Revisa tu archivo.")
+        else:
+            if st.button("🚀 Procesar Carga Insumos"):
+                existing_names = {i.name for i in db.query(Insumo).all()}
+                new_objects = []
+                skipped_count = 0
+                
+                for index, row in df_insumos.iterrows():
+                    name_val = str(row['name']).strip()
+                    
+                    if name_val in existing_names or name_val == "nan":
+                        skipped_count += 1
+                        continue 
+                    
+                    # Manejo seguro de valores numéricos
+                    try:
+                        cost_val = float(str(row.get('cost_gtq', 0)).replace(',', '').replace('Q', ''))
+                    except:
+                        cost_val = 0.0
 
-        st.write("Vista previa de datos a cargar:", df_insumos.head())
-    
-        if st.button("🚀 Procesar Carga Insumos"):
-            # 1. Obtener nombres existentes para no duplicar
-            existing_names = {i.name for i in db.query(Insumo).all()}
-            new_objects = []
-            skipped_count = 0
+                    new_obj = Insumo(
+                        name=name_val,
+                        unit_type=row.get('unit_type', 'UNIDAD'), 
+                        cost_gtq=cost_val,
+                        billing_mode=row.get('billing_mode', 'MULTIPLICABLE')
+                    )
+                    new_objects.append(new_obj)
+                    existing_names.add(name_val) 
 
-            for index, row in df_insumos.iterrows():
-                name_val = str(row['name']).strip()
+                if new_objects:
+                    db.add_all(new_objects)
+                    db.commit()
+                    st.success(f"✅ Se agregaron {len(new_objects)} nuevos insumos.")
+                
+                if skipped_count > 0:
+                    st.warning(f"⚠️ Se omitieron {skipped_count} insumos (ya existían o vacíos).")
 
-                # 2. Verificar si ya existe
-                if name_val in existing_names:
-                    skipped_count += 1
-                    continue # Salta al siguiente
-
-                # 3. Crear objeto si es nuevo
-                new_obj = Insumo(
-                    name=name_val,
-                    unit_type=row.get('unit_type', 'UNIDAD'), # Valor por defecto si falta
-                    cost_gtq=float(row.get('cost_gtq', 0.0)),
-                    billing_mode=row.get('billing_mode', 'MULTIPLICABLE')
-                )
-                new_objects.append(new_obj)
-                # Agregamos al set temporal para evitar duplicados dentro del mismo CSV
-                existing_names.add(name_val)
-
-            if new_objects:
-                db.add_all(new_objects)
-                db.commit()
-                st.success(f"✅ Se agregaron {len(new_objects)} nuevos insumos.")
-
-            if skipped_count > 0:
-                st.warning(f"⚠️ Se omitieron {skipped_count} insumos porque ya existían.")
 
     with st.expander("➕ Crear Nuevo Insumo"):
         with st.form("add_ins"):
