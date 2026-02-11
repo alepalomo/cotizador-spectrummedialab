@@ -116,8 +116,20 @@ with tab_caja:
 
     st.divider()
     st.markdown("⬇️ **Reporte Contable Caja Chica**")
+    
+    # --- NUEVOS FILTROS DE FECHA ---
+    col_d1, col_d2 = st.columns(2)
+    start_d_cc = col_d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_cc")
+    end_d_cc = col_d2.date_input("Hasta", datetime.date.today(), key="d2_cc")
+    
     if st.button("Generar CSV Contable"):
-        data_cc = db.query(Expense).filter(Expense.category=="CAJA_CHICA").all()
+        # AQUI AGREGAMOS EL FILTRO DE FECHAS A LA CONSULTA
+        data_cc = db.query(Expense).filter(
+            Expense.category=="CAJA_CHICA", 
+            Expense.date >= start_d_cc, 
+            Expense.date <= end_d_cc
+        ).all()
+        
         if data_cc:
             export_data = []
             for e in data_cc:
@@ -133,12 +145,14 @@ with tab_caja:
                     "# FACT": e.doc_number, 
                     "Orden Interna": e.oi.oi_code, 
                     "Texto": "B", 
-                    "Texto Adicional 2": e.text_additional, 
-                    "Pagar A": e.pay_to, # Nuevo campo en el CSV
+                    "Texto Adicional 2": e.text_additional,
+                    "Pagar A": e.pay_to, # Mantenemos tu cambio anterior
                     "Actividad": e.quote.activity_name
                 })
             df_cc = pd.DataFrame(export_data)
             st.download_button("Descargar CSV Contable", df_cc.to_csv(index=False).encode('utf-8'), "caja_chica_contable.csv", "text/csv")
+        else:
+            st.warning("No hay gastos en ese rango de fechas.")
 
 # --- PESTAÑA 3: HOST ---
 def format_date_es(d):
