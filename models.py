@@ -68,7 +68,6 @@ class Insumo(Base):
     billing_mode = Column(String) 
     is_active = Column(Boolean, default=True)
 
-# --- COTIZACIONES (AQUÍ ESTÁ EL ARREGLO) ---
 class Quote(Base):
     __tablename__ = "quotes"
     id = Column(Integer, primary_key=True)
@@ -87,12 +86,11 @@ class Quote(Base):
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-    # RELACIONES
     creator = relationship("User")
     activity_type = relationship("ActivityType")
     lines = relationship("QuoteLine", back_populates="quote")
     oi = relationship("OI")
-    mall = relationship("Mall") # <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
+    mall = relationship("Mall")
 
 class QuoteLine(Base):
     __tablename__ = "quote_lines"
@@ -143,6 +141,10 @@ class Expense(Base):
     text_additional = Column(String, nullable=True) 
     host_details = Column(JSON, nullable=True) 
     company_id = Column(Integer, ForeignKey("companies.id"))
+    
+    # --- NUEVO CAMPO ---
+    pay_to = Column(String, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     mall = relationship("Mall")
