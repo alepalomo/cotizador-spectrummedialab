@@ -114,11 +114,91 @@ with tab1:
                 try: db.add(Insumo(name=name, unit_type=unit, cost_gtq=cost, billing_mode=mode)); db.commit(); st.rerun()
                 except: st.error("Error: Duplicado")
     
-    insumos = db.query(Insumo).all()
-    if insumos:
-        df = pd.DataFrame([{"id": i.id, "name": i.name, "cost_gtq": i.cost_gtq, "unit_type": i.unit_type, "billing_mode": i.billing_mode} for i in insumos])
-        edited_df = st.data_editor(df, column_config={"id": st.column_config.NumberColumn(disabled=True), "billing_mode": st.column_config.SelectboxColumn(options=["MULTIPLICABLE", "POR_ACTIVIDAD"]), "unit_type": st.column_config.SelectboxColumn(options=["HORA", "DIA", "UNIDAD"])}, hide_index=True, key="ed_ins")
-        if st.button("Guardar Insumos"): save_changes_generic(Insumo, edited_df)
+    st.markdown("### ✏️ Editor de Insumos")
+    st.caption("Puedes agregar filas nuevas al final o borrar seleccionando la fila y presionando la tecla 'Supr' o el ícono de basurero.")
+
+    # 1. Cargar datos actuales
+    insumos_list = db.query(Insumo).order_by(Insumo.id).all()
+    # Guardamos los IDs originales para saber cuáles se borraron después
+    ids_originales = {i.id for i in insumos_list}
+    
+    df_insumos = pd.DataFrame([
+        {
+            "id": i.id,
+            "name": i.name,
+            "cost_gtq": float(i.cost_gtq),
+            "unit_type": i.unit_type,
+            "billing_mode": i.billing_mode
+        }
+        for i in insumos_list
+    ])
+
+    # 2. Configurar el Editor con num_rows="dynamic" (Esto activa el añadir/borrar nativo)
+    column_cfg_ins = {
+        "id": st.column_config.NumberColumn(disabled=True, width="small"), # ID no editable
+        "name": st.column_config.TextColumn("Insumo/Servicio", required=True, width="medium"),
+        "cost_gtq": st.column_config.NumberColumn("Costo Q", min_value=0, format="Q%.2f", width="small"),
+        "unit_type": st.column_config.SelectboxColumn("Unidad", options=["UNIDAD", "DIA", "GLOBAL", "HORA"], required=True, width="small"),
+        "billing_mode": st.column_config.SelectboxColumn("Modo Cobro", options=["MULTIPLICABLE", "FIJO"], required=True, width="small")
+    }
+
+    edited_insumos = st.data_editor(
+        df_insumos, 
+        column_config=column_cfg_ins, 
+        num_rows="dynamic", # <--- ESTO ACTIVA EL BOTÓN DE BORRAR Y AGREGAR
+        hide_index=True, 
+        use_container_width=True,
+        key="editor_insumos_main"
+    )
+
+    # 3. Lógica Inteligente de Guardado
+    if st.button("💾 Guardar Cambios (Insumos)"):
+        # A. DETECTAR BORRADOS
+        # Obtenemos los IDs que quedaron en la tabla después de editar
+        ids_remanentes = set(edited_insumos["id"].dropna().astype(int).tolist())
+        # La diferencia son los que el usuario borró
+        ids_a_borrar = ids_originales - ids_remanentes
+        
+        deleted_count = 0
+        if ids_a_borrar:
+            db.query(Insumo).filter(Insumo.id.in_(ids_a_borrar)).delete(synchronize_session=False)
+            deleted_count = len(ids_a_borrar)
+
+        # B. DETECTAR NUEVOS Y EDICIONES
+        updated_count = 0
+        new_count = 0
+        
+        for index, row in edited_insumos.iterrows():
+            # Si tiene ID (y no es NaN), es una edición
+            if pd.notna(row["id"]):
+                item = db.query(Insumo).get(int(row["id"]))
+                if item:
+                    item.name = row["name"]
+                    item.cost_gtq = row["cost_gtq"]
+                    item.unit_type = row["unit_type"]
+                    item.billing_mode = row["billing_mode"]
+                    updated_count += 1
+            # Si NO tiene ID (es NaN), es un registro NUEVO
+            else:
+                new_item = Insumo(
+                    name=row["name"],
+                    cost_gtq=row["cost_gtq"],
+                    unit_type=row["unit_type"],
+                    billing_mode=row["billing_mode"]
+                )
+                db.add(new_item)
+                new_count += 1
+        
+        db.commit()
+        
+        # Mensaje de éxito detallado
+        msg = "✅ Procesado: "
+        if deleted_count: msg += f"🗑️ {deleted_count} borrados. "
+        if new_count: msg += f"✨ {new_count} nuevos. "
+        if updated_count: msg += f"✏️ {updated_count} actualizados."
+        
+        st.success(msg)
+        st.rerun()
 
 # --- TAB 2: MALLS Y OIS ---
 with tab2:
