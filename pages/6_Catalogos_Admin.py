@@ -4,7 +4,7 @@ from database import get_db
 from models import Insumo, Mall, ActivityType, Company, OI, User
 from auth import require_role, hash_password
 
-require_role(["ADMIN"])
+require_role(["ADMIN", "AUTORIZADO"])
 db = next(get_db())
 
 st.title("Administración de Catálogos (Editable)")
