@@ -177,6 +177,64 @@ with tab2:
 
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
+    st.markdown("### 📤 Carga Masiva de Tipos de Actividad")
+    uploaded_types = st.file_uploader("Subir CSV de Tipos", type=["csv"], key="csv_types")
+
+    if uploaded_types:
+        try:
+            df_types = pd.read_csv(uploaded_types)
+            if df_types.shape[1] < 2:
+                uploaded_types.seek(0)
+                df_types = pd.read_csv(uploaded_types, sep=';')
+        except:
+            st.error("Error leyendo el archivo. Asegúrate que sea un CSV válido.")
+            st.stop()
+
+        # Normalizar encabezados
+        df_types.columns = [c.lower().strip() for c in df_types.columns]
+        
+        # MAPEO INTELIGENTE (Español -> Inglés)
+        rename_map = {
+            'nombre': 'name', 'tipo': 'name', 'actividad': 'name',
+            'descripcion': 'description', 'descripción': 'description', 'detalle': 'description'
+        }
+        df_types.rename(columns=rename_map, inplace=True)
+        
+        st.write("Columnas detectadas:", df_types.columns.tolist())
+        
+        if 'name' not in df_types.columns:
+            st.error("❌ Error: Falta la columna 'Nombre' o 'Tipo'.")
+        else:
+            if st.button("🚀 Procesar Carga Tipos"):
+                existing_types = {t.name for t in db.query(ActivityType).all()}
+                new_types = []
+                skipped = 0
+                
+                for index, row in df_types.iterrows():
+                    name_val = str(row['name']).strip()
+                    
+                    if name_val in existing_types or name_val == "nan" or name_val == "":
+                        skipped += 1
+                        continue
+                    
+                    desc_val = str(row.get('description', ''))
+                    if desc_val == "nan": desc_val = ""
+
+                    new_obj = ActivityType(
+                        name=name_val,
+                        description=desc_val
+                    )
+                    new_types.append(new_obj)
+                    existing_types.add(name_val)
+
+                if new_types:
+                    db.add_all(new_types)
+                    db.commit()
+                    st.success(f"✅ Se agregaron {len(new_types)} nuevos tipos.")
+                
+                if skipped > 0:
+                    st.warning(f"⚠️ Se omitieron {skipped} tipos duplicados.")
+
     with st.expander("➕ Nueva Actividad", expanded=True):
         with st.form("na"):
             n = st.text_input("Nombre"); d = st.text_area("Descripción")
