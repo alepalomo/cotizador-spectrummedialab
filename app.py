@@ -42,3 +42,14 @@ else:
     
     st.write("---")
     st.info("👈 Selecciona una opción en el menú de la izquierda.")
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    # Aquí va tu formulario de login actual...
+    # Cuando el login es exitoso, agrega:
+    st.session_state["authenticated"] = True
+    st.session_state["username"] = user.username
+    st.session_state["role"] = user.role
+    st.rerun()
