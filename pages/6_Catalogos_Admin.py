@@ -396,123 +396,65 @@ with tab3:
 # --- TAB 4: USUARIOS ---
 with tab4:
 
-    st.markdown("### 👤 Gestión de Usuarios y Accesos")
-    st.info("💡 Para CAMBIAR una contraseña, escríbela en la columna 'Nueva Contraseña'. Si la dejas vacía, se mantiene la actual.")
+    st.markdown("### Gestión de Usuarios y Accesos")
+    st.info("Para cambiar una clave, escribela en 'Password'. Si se deja vacio, se mantiene la actual.")
 
     # 1. Cargar Usuarios
     users_list = db.query(User).order_by(User.id).all()
     ids_originales_u = {u.id for u in users_list}
 
-    # 2. Preparamos el DataFrame (OJO: La columna password empieza vacía por seguridad)
+    # 2. DataFrame
     df_users = pd.DataFrame([
         {
             "id": u.id,
             "username": u.username,
             "role": u.role,
-            "new_password": ""  # Campo para cambiar clave
+            "password": ""
         }
         for u in users_list
     ])
 
-    # 3. Configuración del Editor
-    col_cfg_users = {
-        "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
-        "username": st.column_config.TextColumn("Usuario", required=True, width="medium"),
-        "role": st.column_config.SelectboxColumn(
-            "Rol", 
-            options=["ADMIN", "AUTORIZADO", "VENDEDOR"], 
-            required=True, 
-            width="medium"
-        ),
-        "new_password": st.column_config.TextColumn(
-            "Nueva Contrasena",  # <--- Quitamos el emoji y la ñ por si acaso
-            placeholder="Escribir para cambiar", 
-            width="medium"
-        )
+    # 3. Configuracion ultra-simple (Sin comentarios ni saltos de linea complejos)
+    col_cfg_u = {
+        "id": st.column_config.NumberColumn("ID", disabled=True),
+        "username": st.column_config.TextColumn("Usuario", required=True),
+        "role": st.column_config.SelectboxColumn("Rol", options=["ADMIN", "AUTORIZADO", "VENDEDOR"], required=True),
+        "password": st.column_config.TextColumn("Password", placeholder="Nueva clave")
     }
 
-    edited_users = st.data_editor(
-        df_users,
-        column_config=col_cfg_users,
-        num_rows="dynamic", # <--- Permite Agregar y Borrar
-        hide_index=True,
-        use_container_width=True,
-        key="editor_users_main"
-    )
+    edited_u = st.data_editor(df_users, column_config=col_cfg_u, num_rows="dynamic", hide_index=True, use_container_width=True, key="editor_users_v3")
 
-    # 4. Botón de Guardar
-    if st.button("💾 Guardar Cambios (Usuarios)"):
-        # A. BORRAR USUARIOS
-        ids_remanentes_u = set(edited_users["id"].dropna().astype(int).tolist())
-        ids_borrar_u = ids_originales_u - ids_remanentes_u
+    # 4. Boton de Guardar
+    if st.button("Guardar Usuarios"):
+        ids_remanentes = set(edited_u["id"].dropna().astype(int).tolist())
+        ids_borrar = ids_originales_u - ids_remanentes
         
-        d_count = 0
-        if ids_borrar_u:
-            # Protección anti-suicidio: Evitar borrar al admin principal por error si es el id 1
-            if 1 in ids_borrar_u:
-                st.error("❌ No puedes eliminar al Super Admin (ID 1) desde aquí por seguridad.")
-                ids_borrar_u.remove(1)
-            
-            if ids_borrar_u:
-                db.query(User).filter(User.id.in_(ids_borrar_u)).delete(synchronize_session=False)
-                d_count = len(ids_borrar_u)
+        if ids_borrar:
+            if 1 in ids_borrar:
+                st.error("No se puede borrar el ID 1")
+                ids_borrar.remove(1)
+            if ids_borrar:
+                db.query(User).filter(User.id.in_(ids_borrar)).delete(synchronize_session=False)
 
-        # B. ACTUALIZAR Y CREAR
-        u_count = 0
-        n_count = 0
-        
-        for index, row in edited_users.iterrows():
-            # Limpiamos espacios
-            username_val = str(row["username"]).strip()
-            pass_val = str(row["new_password"]).strip()
+        for index, row in edited_u.iterrows():
+            u_name = str(row["username"]).strip()
+            p_val = str(row["password"]).strip()
             
-            # --- EDICIÓN DE USUARIO EXISTENTE ---
             if pd.notna(row["id"]):
-                user_item = db.query(User).get(int(row["id"]))
-                if user_item:
-                    user_item.username = username_val
-                    user_item.role = row["role"]
-                    
-                    # LOGICA DE PASSWORD: Solo cambiamos si escribió algo nuevo
-                    if pass_val and pass_val != "nan":
-                        hashed = bcrypt.hashpw(pass_val.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                        user_item.password_hash = hashed
-                        u_count += 1
-                    else:
-                        # Si solo cambió el rol o nombre, contamos como actualización también
-                        u_count += 1
-
-            # --- CREACIÓN DE NUEVO USUARIO ---
+                u_item = db.query(User).get(int(row["id"]))
+                if u_item:
+                    u_item.username = u_name
+                    u_item.role = row["role"]
+                    if p_val and p_val != "" and p_val != "nan":
+                        u_item.password_hash = bcrypt.hashpw(p_val.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             else:
-                if not pass_val or pass_val == "nan":
-                    st.warning(f"⚠️ El usuario '{username_val}' no se creó porque falta la contraseña.")
-                    continue
-                
-                hashed = bcrypt.hashpw(pass_val.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                new_user = User(
-                    username=username_val,
-                    password_hash=hashed,
-                    role=row["role"]
-                )
-                db.add(new_user)
-                n_count += 1
+                if p_val and p_val != "" and p_val != "nan":
+                    new_u = User(username=u_name, role=row["role"], password_hash=bcrypt.hashpw(p_val.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'))
+                    db.add(new_u)
         
-        try:
-            db.commit()
-            msg = "✅ Cambios aplicados: "
-            if d_count: msg += f"🗑️ {d_count} eliminados. "
-            if n_count: msg += f"✨ {n_count} creados. "
-            if u_count: msg += f"✏️ {u_count} actualizados."
-            st.success(msg)
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error al guardar: {e}")
-
-    with st.form("nu"):
-        u = st.text_input("Usuario"); p = st.text_input("Password", type="password"); r = st.selectbox("Rol", ["VENDEDOR", "AUTORIZADO", "ADMIN"])
-        if st.form_submit_button("Crear"): 
-            try: db.add(User(username=u, password_hash=hash_password(p), role=r)); db.commit(); st.success("Ok")
-            except: st.error("Error")
+        db.commit()
+        st.success("Usuarios actualizados")
+        st.rerun()
 
 # --- TAB 5: PROVEEDORES ---
 with tab5:
