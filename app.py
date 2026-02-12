@@ -1,10 +1,15 @@
 import streamlit as st
-# Configuración DEBE ser lo primero
-st.set_page_config(page_title="Cotizador Spectrum", page_icon="📊")
+
+# 1. Configuración DEBE ser lo primero
+st.set_page_config(page_title="Cotizador Spectrum", page_icon="📊", layout="wide")
 
 from database import Base, engine, get_db
 from auth import login_form, require_role, hash_password
 from models import User
+
+# --- INICIALIZACIÓN DE SESIÓN PERSISTENTE ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 
 # Crear tablas
 Base.metadata.create_all(bind=engine)
@@ -16,7 +21,6 @@ db = next(get_db())
 try:
     admin_user = db.query(User).filter(User.username == "admin").first()
     if not admin_user:
-        # Crea el usuario admin si no existe
         admin_pass = hash_password("admin123") 
         new_admin = User(username="admin", password_hash=admin_pass, role="ADMIN")
         db.add(new_admin)
@@ -24,32 +28,38 @@ try:
         print("✅ Usuario Admin creado automáticamente.")
 except Exception as e:
     print(f"Error verificando admin: {e}")
-# -----------------------------------------------------
 
-# Lógica de Login
-if "user_id" not in st.session_state:
-    login_form()
-else:
-    # Sidebar
-    st.sidebar.title(f"Hola, {st.session_state['username']}")
-    st.sidebar.write(f"Rol: {st.session_state['role']}")
-    
-    if st.sidebar.button("Cerrar Sesión"):
-        for key in ["user_id", "role", "username"]:
-            if key in st.session_state:
-                del st.session_state[key]
-        st.rerun()
-    
-    st.write("---")
-    st.info("👈 Selecciona una opción en el menú de la izquierda.")
+# ==============================================================================
+# LÓGICA DE CONTROL DE ACCESO
+# ==============================================================================
 
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
+# Si NO está autenticado, muestra el login y DETIENE el resto de la ejecución
 if not st.session_state["authenticated"]:
-    # Aquí va tu formulario de login actual...
-    # Cuando el login es exitoso, agrega:
-    st.session_state["authenticated"] = True
-    st.session_state["username"] = user.username
-    st.session_state["role"] = user.role
+    login_form()
+    # Importante: Dentro de login_form() debe ponerse st.session_state["authenticated"] = True 
+    # cuando las credenciales sean correctas para que esto funcione.
+    st.stop() 
+
+# SI LLEGA AQUÍ, EL USUARIO YA ESTÁ LOGUEADO
+# ==============================================================================
+# CONTENIDO PRINCIPAL (SIDEBAR Y VISTA)
+# ==============================================================================
+
+# Sidebar
+st.sidebar.title(f"👋 Hola, {st.session_state.get('username', 'Usuario')}")
+st.sidebar.write(f"💼 Rol: {st.session_state.get('role', 'Sin Rol')}")
+
+st.sidebar.divider()
+
+if st.sidebar.button("🚪 Cerrar Sesión"):
+    # Limpiamos todas las llaves para un cierre total
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
     st.rerun()
+
+# Cuerpo de la página de bienvenida
+st.title("🚀 Sistema de Cotizaciones Spectrum Media")
+st.write("---")
+st.info("👈 Selecciona una opción en el menú de la izquierda para comenzar.")
+
+# Opcional: Mostrar resumen rápido o métricas aquí
