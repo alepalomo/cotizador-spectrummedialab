@@ -416,18 +416,17 @@ with tab4:
 
     # 3. Configuración del Editor
     col_cfg_users = {
-        "id": st.column_config.NumberColumn(disabled=True, width="small"),
+        "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
         "username": st.column_config.TextColumn("Usuario", required=True, width="medium"),
         "role": st.column_config.SelectboxColumn(
-            "Rol / Permisos", 
+            "Rol", 
             options=["ADMIN", "AUTORIZADO", "VENDEDOR"], 
             required=True, 
             width="medium"
         ),
         "new_password": st.column_config.TextColumn(
-            "Nueva Contraseña 🔒", 
-            placeholder="Escribe para cambiar...", 
-            help="Déjalo vacío para mantener la contraseña actual",
+            "Nueva Contrasena",  # <--- Quitamos el emoji y la ñ por si acaso
+            placeholder="Escribir para cambiar", 
             width="medium"
         )
     }
