@@ -396,64 +396,53 @@ with tab3:
 # --- TAB 4: USUARIOS ---
 with tab4:
 
-    st.markdown("### Gestión de Usuarios y Accesos")
-    st.info("Para cambiar una clave, escribela en 'Password'. Si se deja vacio, se mantiene la actual.")
+    st.markdown("### Gestion de Usuarios")
+    st.info("Escribe en 'Password' para cambiar la clave. Si queda vacio, no hay cambios.")
 
     # 1. Cargar Usuarios
-    users_list = db.query(User).order_by(User.id).all()
-    ids_originales_u = {u.id for u in users_list}
+    u_list = db.query(User).order_by(User.id).all()
+    u_orig_ids = {u.id for u in u_list}
 
-    # 2. DataFrame
-    df_users = pd.DataFrame([
-        {
-            "id": u.id,
-            "username": u.username,
-            "role": u.role,
-            "password": ""
-        }
-        for u in users_list
-    ])
+    # 2. DataFrame simple
+    df_u = pd.DataFrame([{"id": u.id, "username": u.username, "role": u.role, "password": ""} for u in u_list])
 
-    # 3. Configuracion ultra-simple (Sin comentarios ni saltos de linea complejos)
-    col_cfg_u = {
+    # 3. Configuracion en una sola linea por columna para evitar el TypeError
+    c_config = {
         "id": st.column_config.NumberColumn("ID", disabled=True),
         "username": st.column_config.TextColumn("Usuario", required=True),
         "role": st.column_config.SelectboxColumn("Rol", options=["ADMIN", "AUTORIZADO", "VENDEDOR"], required=True),
-        "password": st.column_config.TextColumn("Password", placeholder="Nueva clave")
+        "password": st.column_config.TextColumn("Password")
     }
 
-    edited_u = st.data_editor(df_users, column_config=col_cfg_u, num_rows="dynamic", hide_index=True, use_container_width=True, key="editor_users_v3")
+    # 4. Editor Dinamico
+    ed_u = st.data_editor(df_u, column_config=c_config, num_rows="dynamic", hide_index=True, use_container_width=True, key="users_editor_final")
 
-    # 4. Boton de Guardar
     if st.button("Guardar Usuarios"):
-        ids_remanentes = set(edited_u["id"].dropna().astype(int).tolist())
-        ids_borrar = ids_originales_u - ids_remanentes
+        # Procesar Borrados
+        curr_ids = set(ed_u["id"].dropna().astype(int).tolist())
+        for d_id in (u_orig_ids - curr_ids):
+            if d_id != 1: # Proteccion Admin
+                db.query(User).filter(User.id == d_id).delete()
         
-        if ids_borrar:
-            if 1 in ids_borrar:
-                st.error("No se puede borrar el ID 1")
-                ids_borrar.remove(1)
-            if ids_borrar:
-                db.query(User).filter(User.id.in_(ids_borrar)).delete(synchronize_session=False)
-
-        for index, row in edited_u.iterrows():
+        # Procesar Cambios y Nuevos
+        for _, row in ed_u.iterrows():
             u_name = str(row["username"]).strip()
-            p_val = str(row["password"]).strip()
+            pw = str(row["password"]).strip()
             
             if pd.notna(row["id"]):
-                u_item = db.query(User).get(int(row["id"]))
-                if u_item:
-                    u_item.username = u_name
-                    u_item.role = row["role"]
-                    if p_val and p_val != "" and p_val != "nan":
-                        u_item.password_hash = bcrypt.hashpw(p_val.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                user = db.query(User).get(int(row["id"]))
+                if user:
+                    user.username = u_name
+                    user.role = row["role"]
+                    if pw and pw not in ["", "nan"]:
+                        user.password_hash = bcrypt.hashpw(pw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             else:
-                if p_val and p_val != "" and p_val != "nan":
-                    new_u = User(username=u_name, role=row["role"], password_hash=bcrypt.hashpw(p_val.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'))
-                    db.add(new_u)
+                if pw and pw not in ["", "nan"]:
+                    hash_pw = bcrypt.hashpw(pw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    db.add(User(username=u_name, role=row["role"], password_hash=hash_pw))
         
         db.commit()
-        st.success("Usuarios actualizados")
+        st.success("Cambios guardados con exito")
         st.rerun()
 
 # --- TAB 5: PROVEEDORES ---
