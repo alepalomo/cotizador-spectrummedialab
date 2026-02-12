@@ -22,16 +22,20 @@ def login_form():
             user = db.query(User).filter(User.username == username).first()
             
             if user and check_password(password, user.password_hash):
+                # --- CAMBIO CLAVE: Activamos la persistencia ---
+                st.session_state["authenticated"] = True # <--- Activa el bloque mágico del main
                 st.session_state["user_id"] = user.id
                 st.session_state["username"] = user.username
                 st.session_state["role"] = user.role
+                
                 st.success(f"Bienvenido {user.username}")
                 st.rerun()
             else:
                 st.error("Usuario o contraseña incorrectos")
 
 def require_role(roles):
-    if "user_id" not in st.session_state:
+    # Validamos usando la nueva bandera 'authenticated'
+    if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
         st.warning("Debes iniciar sesión.")
         st.stop()
     
