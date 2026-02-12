@@ -509,7 +509,12 @@ with tab4:
         except Exception as e:
             st.error(f"Error al guardar: {e}")
 
-    
+    with st.form("nu"):
+        u = st.text_input("Usuario"); p = st.text_input("Password", type="password"); r = st.selectbox("Rol", ["VENDEDOR", "AUTORIZADO", "ADMIN"])
+        if st.form_submit_button("Crear"): 
+            try: db.add(User(username=u, password_hash=hash_password(p), role=r)); db.commit(); st.success("Ok")
+            except: st.error("Error")
+
 # --- TAB 5: PROVEEDORES ---
 with tab5:
     st.subheader("🏢 Catálogo de Proveedores Detallado")
