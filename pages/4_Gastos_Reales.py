@@ -214,7 +214,7 @@ with tab_host:
     st.divider()
 
     # --- PASO 2: VINCULAR A ACTIVIDAD ---
-    st.markdown("### 2️⃣ Registrar en Actividad (Imputación)")
+    st.markdown("### 2️⃣ Registrar en Actividad")
     st.caption("Selecciona de dónde saldrá el dinero para pagar esto.")
     
     # Filtramos solo actividades aprobadas
