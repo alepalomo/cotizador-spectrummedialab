@@ -357,19 +357,117 @@ with tab2:
                     db.rollback() # <--- SIEMPRE después de un error en commit
                     st.error(f"Error en carga masiva: {e}")
 
-        st.subheader("Listado de OIs")
-        if ois_data:
-            # Aquí usas tu componente de tabla editable (st.data_editor o similar)
-            edited_df = st.data_editor(pd.DataFrame([
-                {"id": o.id, "Mall": o.mall_id, "Codigo": o.oi_code, "Nombre": o.oi_name, "Presupuesto": o.annual_budget_usd} 
-                for o in ois_data
-            ]), key="oi_editor")
+        st.write("---")
+        st.subheader("📋 Listado y Edición de OIs")
+
+        # 1. Recuperar datos (Malls y OIs) con seguridad
+        try:
+            malls_db = db.query(Mall).all()
+            # Creamos diccionarios para traducir ID <-> Nombre
+            mall_id_to_name = {m.id: m.name for m in malls_db}
+            mall_name_to_id = {m.name: m.id for m in malls_db}
             
-            if st.button("Guardar Cambios en OIs"):
-                # Lógica para actualizar en la DB
-                pass
+            ois_db = db.query(OI).order_by(OI.id).all()
+        except Exception:
+            db.rollback()
+            st.error("Error de conexión. Intentando reconectar...")
+            st.rerun()
+
+        if ois_db:
+            # 2. Preparar el DataFrame para la tabla
+            # Convertimos los datos de la DB a un formato amigable para editar
+            df_ois = pd.DataFrame([
+                {
+                    "id": o.id,
+                    "Mall": mall_id_to_name.get(o.mall_id, "Desconocido"), # Mostramos Nombre, no ID
+                    "Codigo": o.oi_code,
+                    "Nombre": o.oi_name,
+                    "Presupuesto": o.annual_budget_usd,
+                    "Eliminar": False  # Casilla para marcar borrado
+                } for o in ois_db
+            ])
+
+            # 3. Configurar el Editor
+            edited_df = st.data_editor(
+                df_ois,
+                key="editor_ois_main",
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "id": st.column_config.NumberColumn(disabled=True, width="small"), # ID no editable
+                    "Mall": st.column_config.SelectboxColumn(
+                        "Mall",
+                        help="Selecciona el Mall",
+                        width="medium",
+                        options=list(mall_name_to_id.keys()), # Dropdown con nombres de Malls
+                        required=True
+                    ),
+                    "Codigo": st.column_config.TextColumn("Código OI", width="medium"), # Forzamos texto para evitar decimales
+                    "Nombre": st.column_config.TextColumn("Descripción", width="large"),
+                    "Presupuesto": st.column_config.NumberColumn(
+                        "Presupuesto ($)", 
+                        format="$%.2f",
+                        min_value=0,
+                        step=100
+                    ),
+                    "Eliminar": st.column_config.CheckboxColumn(
+                        "🗑️", 
+                        help="Marca para eliminar este registro",
+                        default=False,
+                        width="small"
+                    )
+                }
+            )
+
+            # 4. Botón de Guardado con Lógica de Base de Datos
+            if st.button("💾 Guardar Cambios en OIs", type="primary"):
+                try:
+                    changes_count = 0
+                    
+                    # A) PROCESAR ELIMINACIONES
+                    rows_to_delete = edited_df[edited_df["Eliminar"] == True]
+                    if not rows_to_delete.empty:
+                        ids_to_del = rows_to_delete["id"].tolist()
+                        # Borramos masivamente los IDs marcados
+                        db.query(OI).filter(OI.id.in_(ids_to_del)).delete(synchronize_session=False)
+                        changes_count += len(ids_to_del)
+
+                    # B) PROCESAR EDICIONES (Solo de filas NO marcadas para borrar)
+                    rows_to_update = edited_df[edited_df["Eliminar"] == False]
+                    
+                    for index, row in rows_to_update.iterrows():
+                        # Buscamos el objeto original en la DB
+                        original_oi = db.query(OI).get(row["id"])
+                        
+                        if original_oi:
+                            # Recuperamos el ID del Mall basado en el nombre seleccionado
+                            new_mall_id = mall_name_to_id.get(row["Mall"])
+                            
+                            # Verificamos si algo cambió para no hacer updates innecesarios
+                            if (original_oi.oi_name != row["Nombre"] or 
+                                original_oi.oi_code != str(row["Codigo"]) or 
+                                original_oi.annual_budget_usd != float(row["Presupuesto"]) or
+                                original_oi.mall_id != new_mall_id):
+                                
+                                original_oi.oi_name = row["Nombre"]
+                                original_oi.oi_code = str(row["Codigo"]) # Aseguramos string
+                                original_oi.annual_budget_usd = float(row["Presupuesto"])
+                                original_oi.mall_id = new_mall_id
+                                changes_count += 1
+                    
+                    if changes_count > 0:
+                        db.commit()
+                        st.toast(f"✅ Se actualizaron {changes_count} registros.", icon="🎉")
+                        st.rerun() # Recargamos para ver los cambios limpios
+                    else:
+                        st.info("No se detectaron cambios para guardar.")
+
+                except Exception as e:
+                    db.rollback() # Importantísimo por si hay códigos duplicados
+                    st.error(f"Error al guardar: {e}")
+
         else:
-            st.info("No hay OIs registradas actualmente.")
+            st.info("Aún no hay OIs cargadas. Usa el formulario de arriba o la carga masiva.")
 
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
