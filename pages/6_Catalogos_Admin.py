@@ -325,6 +325,7 @@ with tab2:
         except Exception:
             db.rollback() # Limpia cualquier error previo para permitir la lectura
             ois_data = db.query(OI).all()
+        
         # Carga CSV OIs
         with st.expander("📂 Carga Masiva OIs (CSV)"):
             st.info("Formato esperado: Mall, Codigo, Nombre, Presupuesto")
@@ -332,23 +333,29 @@ with tab2:
             
             if uploaded_oi and st.button("Procesar Archivo"):
                 try:
-                    # 1. CARGA BLINDADA CONTRA NOTACIÓN CIENTÍFICA
-                    # Forzamos a que la columna 'Codigo' sea leída como texto (str)
+                    # 1. CARGA INTELIGENTE (Detecta ; o , y fuerza Texto en Código)
                     if uploaded_oi.name.endswith('.csv'):
                         df_load = pd.read_csv(
                             uploaded_oi, 
                             encoding='utf-8-sig', 
-                            dtype={'Codigo': str} # <--- ESTO ES LA CLAVE
+                            sep=None,              # <--- ¡ESTO FALTABA! Autodetecta ;
+                            engine='python',       # <--- Necesario para que funcione sep=None
+                            dtype={'Codigo': str}  # <--- Mantiene tus números completos
                         )
                     else:
                         df_load = pd.read_excel(
                             uploaded_oi, 
-                            dtype={'Codigo': str} # <--- ESTO ES LA CLAVE
+                            dtype={'Codigo': str}
                         )
                     
                     # Limpieza de nombres de columnas
                     df_load.columns = df_load.columns.str.strip()
                     
+                    # Verificación de seguridad antes de iterar
+                    if 'Mall' not in df_load.columns:
+                        st.error(f"Error de formato: No encuentro la columna 'Mall'. Columnas detectadas: {list(df_load.columns)}")
+                        st.stop()
+
                     # Mapeo de Malls
                     malls_map = {m.name.strip().lower(): m.id for m in db.query(Mall).all()}
                     
@@ -362,22 +369,22 @@ with tab2:
                             mall_key = mall_input.lower()
                             
                             # --- LIMPIEZA DEL CÓDIGO ---
-                            # Como ya lo leímos como texto, solo quitamos espacios y posibles .0
                             raw_code = str(row['Codigo']).strip()
-                            if raw_code.endswith('.0'):
-                                clean_code = raw_code[:-2] # Quita el .0 final si existe
-                            else:
-                                clean_code = raw_code
+                            # Si aún viniera con notación científica (raro con dtype, pero posible en CSV sucio)
+                            if 'E+' in raw_code or raw_code.endswith('.0'):
+                                raw_code = str(int(float(raw_code)))
+                            
+                            clean_code = raw_code
                             # ---------------------------
 
                             # Validar Mall
                             if mall_key not in malls_map:
-                                errors.append(f"Fila {index+1}: Mall '{mall_input}' no encontrado.")
+                                errors.append(f"Fila {index+1}: Mall '{mall_input}' no encontrado en catálogo.")
                                 continue
                             
                             mall_id_found = malls_map[mall_key]
                             
-                            # Lógica UPSERT (Actualizar o Crear)
+                            # Lógica UPSERT
                             existing_oi = db.query(OI).filter(OI.oi_code == clean_code).first()
                             
                             if existing_oi:
@@ -402,8 +409,8 @@ with tab2:
                     db.commit()
                     
                     if created_count > 0 or updated_count > 0:
-                        st.success(f"✅ Éxito total: {created_count} creadas y {updated_count} actualizadas.")
-                        st.balloons() # ¡Para celebrar cuando funcione!
+                        st.success(f"✅ ¡Listo! {created_count} creadas y {updated_count} actualizadas correctamente.")
+                        st.balloons()
                         st.rerun()
                     elif not errors:
                         st.warning("⚠️ El archivo se leyó pero no hubo cambios necesarios.")
@@ -416,7 +423,7 @@ with tab2:
                 except Exception as e:
                     db.rollback()
                     st.error(f"Error crítico: {e}")
-                    
+
         st.write("---")
         st.subheader("📋 Listado y Edición de OIs")
 
