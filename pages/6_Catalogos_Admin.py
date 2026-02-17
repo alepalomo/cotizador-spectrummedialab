@@ -309,55 +309,50 @@ with tab2:
                 oc = st.text_input("Código")
                 on = st.text_input("Nombre")
                 ob = st.number_input("Presupuesto Anual", min_value=0.0)
-                if st.button("Crear OI"): db.add(OI(mall_id=sm.id, oi_code=oc, oi_name=on, annual_budget_usd=ob)); db.commit(); st.rerun()
+                if st.button("Crear OI"):
+                    try:
+                        # Forzamos que el código sea un string sin decimales antes de guardar
+                        clean_manual_code = str(int(float(oc))) if oc.replace('.','').isdigit() else oc
+                        db.add(OI(mall_id=sm.id, oi_code=clean_manual_code, oi_name=on, annual_budget_usd=ob))
+                        db.commit()
+                        st.success("OI creada con éxito")
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback() # <--- ESTO ES LO QUE DESBLOQUEA TU APP
+                        st.error(f"Error al crear: {e}")        
         
         # Carga CSV OIs
         with st.expander("📂 Carga Masiva OIs (CSV)"):
-            uploaded_oi = st.file_uploader("Sube CSV (Mall, Codigo, Nombre, Presupuesto)", type=["csv", "xlsx"])
-            
+            uploaded_oi = st.file_uploader("Sube CSV", type=["csv", "xlsx"])
             if uploaded_oi and st.button("Procesar Archivo"):
                 try:
-                    # 1. Carga de datos
-                    if uploaded_oi.name.endswith('.csv'):
-                        df_load = pd.read_csv(uploaded_oi, encoding='utf-8-sig', sep=None, engine='python')
-                    else:
-                        df_load = pd.read_excel(uploaded_oi)
-
+                    # Detectar formato y limpiar
+                    df_load = pd.read_csv(uploaded_oi, encoding='utf-8-sig', sep=None, engine='python') if uploaded_oi.name.endswith('.csv') else pd.read_excel(uploaded_oi)
                     df_load.columns = df_load.columns.str.strip()
+                    
                     existing_malls = {m.name: m.id for m in db.query(Mall).all()}
-                    existing_oi_codes = {o.oi_code for o in db.query(OI.oi_code).all()}
+                    existing_codes = {o.oi_code for o in db.query(OI.oi_code).all()}
                     
                     count = 0
                     for _, row in df_load.iterrows():
-                        # --- PROCESAMIENTO DEL CÓDIGO COMO ENTERO ---
-                        # Convertimos a numérico primero, luego a entero y finalmente a string para la DB
-                        try:
-                            raw_val = pd.to_numeric(row['Codigo'])
-                            clean_code = str(int(raw_val)) # Esto elimina cualquier .0
-                        except:
-                            clean_code = str(row['Codigo']).strip() # Fallback por si no es numérico
-                        # --------------------------------------------
-
+                        # Limpiar el código de Excel (quitar el .0)
+                        raw_val = pd.to_numeric(row['Codigo'], errors='coerce')
+                        clean_code = str(int(raw_val)) if pd.notnull(raw_val) else str(row['Codigo']).strip()
+                        
                         mall_name = str(row['Mall']).strip()
                         
-                        if mall_name in existing_malls and clean_code not in existing_oi_codes:
-                            db.add(OI(
-                                mall_id=existing_malls[mall_name], 
-                                oi_code=clean_code, # Se guarda como "300000000000"
-                                oi_name=str(row['Nombre']), 
-                                annual_budget_usd=float(row['Presupuesto'])
-                            ))
-                            existing_oi_codes.add(clean_code)
+                        if mall_name in existing_malls and clean_code not in existing_codes:
+                            db.add(OI(mall_id=existing_malls[mall_name], oi_code=clean_code, oi_name=str(row['Nombre']), annual_budget_usd=float(row['Presupuesto'])))
+                            existing_codes.add(clean_code)
                             count += 1
                     
                     db.commit()
-                    st.success(f"✅ {count} OIs cargadas sin decimales.")
+                    st.success(f"Se cargaron {count} OIs nuevas.")
                     st.rerun()
-                    
                 except Exception as e:
-                    db.rollback()
-                    st.error(f"Error: {e}")
-                    
+                    db.rollback() # <--- SIEMPRE después de un error en commit
+                    st.error(f"Error en carga masiva: {e}")
+
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
     st.markdown("### 📤 Carga Masiva de Tipos de Actividad")
