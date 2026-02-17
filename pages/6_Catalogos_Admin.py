@@ -320,7 +320,11 @@ with tab2:
                     except Exception as e:
                         db.rollback() # <--- ESTO ES LO QUE DESBLOQUEA TU APP
                         st.error(f"Error al crear: {e}")        
-        
+        try:
+            ois_data = db.query(OI).all()
+        except Exception:
+            db.rollback() # Limpia cualquier error previo para permitir la lectura
+            ois_data = db.query(OI).all()
         # Carga CSV OIs
         with st.expander("📂 Carga Masiva OIs (CSV)"):
             uploaded_oi = st.file_uploader("Sube CSV", type=["csv", "xlsx"])
@@ -352,6 +356,20 @@ with tab2:
                 except Exception as e:
                     db.rollback() # <--- SIEMPRE después de un error en commit
                     st.error(f"Error en carga masiva: {e}")
+
+        st.subheader("Listado de OIs")
+        if ois_data:
+            # Aquí usas tu componente de tabla editable (st.data_editor o similar)
+            edited_df = st.data_editor(pd.DataFrame([
+                {"id": o.id, "Mall": o.mall_id, "Codigo": o.oi_code, "Nombre": o.oi_name, "Presupuesto": o.annual_budget_usd} 
+                for o in ois_data
+            ]), key="oi_editor")
+            
+            if st.button("Guardar Cambios en OIs"):
+                # Lógica para actualizar en la DB
+                pass
+        else:
+            st.info("No hay OIs registradas actualmente.")
 
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
