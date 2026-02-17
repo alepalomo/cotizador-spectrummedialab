@@ -97,7 +97,7 @@ with tab1:
             'unidad': 'unit_type', 'medida': 'unit_type', 'tipo': 'unit_type',
             'cobro': 'billing_mode', 'modo': 'billing_mode',
             # NUEVOS CAMPOS
-            'categoria': 'category', 'cat': 'category',
+            'categoria': 'category', 'cat': 'category', 'categoría': 'category',
             'descripcion': 'description', 'detalle': 'description', 'desc': 'description'
         }
         df_insumos.rename(columns=rename_map, inplace=True)
