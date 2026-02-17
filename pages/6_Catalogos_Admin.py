@@ -314,33 +314,59 @@ with tab2:
         # Carga CSV OIs
         with st.expander("📂 Carga Masiva OIs (CSV)"):
             uploaded_oi = st.file_uploader("Sube CSV (Mall, Codigo, Nombre, Presupuesto)", type=["csv", "xlsx"])
+            
             if uploaded_oi and st.button("Procesar Archivo"):
                 try:
-                    df_load = pd.read_csv(uploaded_oi) if uploaded_oi.name.endswith('.csv') else pd.read_excel(uploaded_oi)
+                    # 1. Manejo robusto de la lectura
+                    if uploaded_oi.name.endswith('.csv'):
+                        # encoding='utf-8-sig' elimina el BOM de Excel
+                        # sep=None con engine='python' detecta automáticamente si es coma o punto y coma
+                        df_load = pd.read_csv(uploaded_oi, encoding='utf-8-sig', sep=None, engine='python')
+                    else:
+                        df_load = pd.read_excel(uploaded_oi)
+
+                    # 2. Limpieza de nombres de columnas (quita espacios extra o caracteres raros)
+                    df_load.columns = df_load.columns.str.strip()
+
                     existing_malls = {m.name: m.id for m in db.query(Mall).all()}
                     count = 0
+                    
                     for _, row in df_load.iterrows():
-                        if str(row['Mall']).strip() in existing_malls:
-                            db.add(OI(mall_id=existing_malls[str(row['Mall']).strip()], oi_code=str(row['Codigo']), oi_name=str(row['Nombre']), annual_budget_usd=float(row['Presupuesto'])))
+                        # 3. Limpieza del valor de la celda
+                        mall_name = str(row['Mall']).strip()
+                        
+                        if mall_name in existing_malls:
+                            db.add(OI(
+                                mall_id=existing_malls[mall_name], 
+                                oi_code=str(row['Codigo']), 
+                                oi_name=str(row['Nombre']), 
+                                annual_budget_usd=float(row['Presupuesto'])
+                            ))
                             count += 1
-                    db.commit(); st.success(f"{count} OIs cargadas."); st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
-
-        # Tabla OIs
-        ois = db.query(OI).all()
-        malls_map = {m.name: m.id for m in db.query(Mall).all()}
-        if ois:
-            data_ois = [{"id": o.id, "mall_name": next((name for name, id_ in malls_map.items() if id_ == o.mall_id), "Sin Asignar"), "oi_code": o.oi_code, "oi_name": o.oi_name, "annual_budget_usd": o.annual_budget_usd} for o in ois]
-            ed_o = st.data_editor(pd.DataFrame(data_ois), column_config={"id": st.column_config.NumberColumn(disabled=True, width="small"), "mall_name": st.column_config.SelectboxColumn("Mall", options=list(malls_map.keys()), required=True)}, hide_index=True, key="ed_ois")
-            if st.button("Guardar OIs"):
-                try:
-                    for row in ed_o.to_dict('records'):
-                        obj = db.query(OI).get(row['id'])
-                        if obj:
-                            obj.oi_code = row['oi_code']; obj.oi_name = row['oi_name']; obj.annual_budget_usd = row['annual_budget_usd']
-                            if row['mall_name'] in malls_map: obj.mall_id = malls_map[row['mall_name']]
-                    db.commit(); st.rerun()
-                except Exception as e: st.error(str(e))
+                    
+                    db.commit()
+                    st.success(f"✅ {count} OIs cargadas correctamente.")
+                    st.rerun()
+                    
+                except KeyError as e:
+                    st.error(f"Error: No se encontró la columna {e}. Revisa que el encabezado sea exactamente 'Mall'.")
+                except Exception as e:
+                    st.error(f"Error inesperado: {e}")
+                # Tabla OIs
+                ois = db.query(OI).all()
+                malls_map = {m.name: m.id for m in db.query(Mall).all()}
+                if ois:
+                    data_ois = [{"id": o.id, "mall_name": next((name for name, id_ in malls_map.items() if id_ == o.mall_id), "Sin Asignar"), "oi_code": o.oi_code, "oi_name": o.oi_name, "annual_budget_usd": o.annual_budget_usd} for o in ois]
+                    ed_o = st.data_editor(pd.DataFrame(data_ois), column_config={"id": st.column_config.NumberColumn(disabled=True, width="small"), "mall_name": st.column_config.SelectboxColumn("Mall", options=list(malls_map.keys()), required=True)}, hide_index=True, key="ed_ois")
+                    if st.button("Guardar OIs"):
+                        try:
+                            for row in ed_o.to_dict('records'):
+                                obj = db.query(OI).get(row['id'])
+                                if obj:
+                                    obj.oi_code = row['oi_code']; obj.oi_name = row['oi_name']; obj.annual_budget_usd = row['annual_budget_usd']
+                                    if row['mall_name'] in malls_map: obj.mall_id = malls_map[row['mall_name']]
+                            db.commit(); st.rerun()
+                        except Exception as e: st.error(str(e))
 
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
