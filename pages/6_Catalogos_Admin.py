@@ -327,33 +327,35 @@ with tab2:
             ois_data = db.query(OI).all()
         
         # Carga CSV OIs
-        with st.expander("📂 Carga Masiva OIs (CSV)"):
-            st.info("Formato esperado: Mall, Codigo, Nombre, Presupuesto")
-            uploaded_oi = st.file_uploader("Sube CSV o Excel", type=["csv", "xlsx"])
+        with st.expander("📂 Carga Masiva OIs (CSV o Excel)"):
+            st.info("💡 RECOMENDACIÓN: Sube el archivo en formato EXCEL (.xlsx) para evitar problemas con los números largos.")
+            uploaded_oi = st.file_uploader("Sube archivo", type=["xlsx", "csv"])
             
             if uploaded_oi and st.button("Procesar Archivo"):
                 try:
-                    # 1. CARGA INTELIGENTE (Detecta ; o , y fuerza Texto en Código)
+                    # 1. LECTURA BLINDADA (Forzamos a que el Código sea Texto para no perder dígitos)
                     if uploaded_oi.name.endswith('.csv'):
+                        # Para CSV: Detectamos separador automático y forzamos string
                         df_load = pd.read_csv(
                             uploaded_oi, 
                             encoding='utf-8-sig', 
-                            sep=None,              # <--- ¡ESTO FALTABA! Autodetecta ;
-                            engine='python',       # <--- Necesario para que funcione sep=None
-                            dtype={'Codigo': str}  # <--- Mantiene tus números completos
+                            sep=None, 
+                            engine='python', 
+                            dtype={'Codigo': str} # <--- ¡ESTO ES VITAL!
                         )
                     else:
+                        # Para EXCEL: Esta es la mejor opción
                         df_load = pd.read_excel(
                             uploaded_oi, 
-                            dtype={'Codigo': str}
+                            dtype={'Codigo': str} # <--- Lee "300000002352" tal cual, sin redondear
                         )
                     
-                    # Limpieza de nombres de columnas
+                    # Limpieza de nombres de columnas (quita espacios extra)
                     df_load.columns = df_load.columns.str.strip()
                     
-                    # Verificación de seguridad antes de iterar
-                    if 'Mall' not in df_load.columns:
-                        st.error(f"Error de formato: No encuentro la columna 'Mall'. Columnas detectadas: {list(df_load.columns)}")
+                    # Validación de columnas
+                    if 'Mall' not in df_load.columns or 'Codigo' not in df_load.columns:
+                        st.error(f"Error: No encuentro las columnas 'Mall' o 'Codigo'. Detectadas: {list(df_load.columns)}")
                         st.stop()
 
                     # Mapeo de Malls
@@ -365,26 +367,32 @@ with tab2:
 
                     for index, row in df_load.iterrows():
                         try:
+                            # Datos básicos
                             mall_input = str(row['Mall']).strip()
                             mall_key = mall_input.lower()
                             
-                            # --- LIMPIEZA DEL CÓDIGO ---
+                            # --- RECUPERACIÓN DEL CÓDIGO EXACTO ---
+                            # Al leer como string, debería venir como "300000002352"
                             raw_code = str(row['Codigo']).strip()
-                            # Si aún viniera con notación científica (raro con dtype, pero posible en CSV sucio)
-                            if 'E+' in raw_code or raw_code.endswith('.0'):
-                                raw_code = str(int(float(raw_code)))
                             
-                            clean_code = raw_code
-                            # ---------------------------
+                            # Solo si por desgracia viene como notación científica (ej: "3.00E+11"), intentamos convertirlo
+                            # Pero si subes el Excel, esto NO debería pasar.
+                            if 'E+' in raw_code:
+                                st.warning(f"Fila {index+1}: El código venía en notación científica ({raw_code}). Se perderá precisión. Usa .xlsx mejor.")
+                                clean_code = str(int(float(raw_code)))
+                            elif raw_code.endswith('.0'):
+                                clean_code = raw_code[:-2]
+                            else:
+                                clean_code = raw_code # Aquí tomamos el "300000002352" original
+                            # --------------------------------------
 
-                            # Validar Mall
                             if mall_key not in malls_map:
-                                errors.append(f"Fila {index+1}: Mall '{mall_input}' no encontrado en catálogo.")
+                                errors.append(f"Fila {index+1}: Mall '{mall_input}' no existe.")
                                 continue
                             
                             mall_id_found = malls_map[mall_key]
                             
-                            # Lógica UPSERT
+                            # Upsert (Actualizar o Crear)
                             existing_oi = db.query(OI).filter(OI.oi_code == clean_code).first()
                             
                             if existing_oi:
@@ -395,7 +403,7 @@ with tab2:
                             else:
                                 new_oi = OI(
                                     mall_id=mall_id_found,
-                                    oi_code=clean_code,
+                                    oi_code=clean_code, # Guardamos el código exacto
                                     oi_name=str(row['Nombre']).strip(),
                                     annual_budget_usd=float(row['Presupuesto']),
                                     is_active=True
@@ -404,19 +412,19 @@ with tab2:
                                 created_count += 1
                                 
                         except Exception as row_e:
-                            errors.append(f"Error en fila {index+1}: {row_e}")
+                            errors.append(f"Error fila {index+1}: {row_e}")
 
                     db.commit()
                     
                     if created_count > 0 or updated_count > 0:
-                        st.success(f"✅ ¡Listo! {created_count} creadas y {updated_count} actualizadas correctamente.")
+                        st.success(f"✅ Procesado: {created_count} nuevos y {updated_count} actualizados.")
                         st.balloons()
                         st.rerun()
                     elif not errors:
-                        st.warning("⚠️ El archivo se leyó pero no hubo cambios necesarios.")
-                    
+                        st.warning("⚠️ No hubo cambios en la base de datos.")
+                        
                     if errors:
-                        st.error("Hubo problemas con algunas filas:")
+                        st.error("Errores encontrados:")
                         for e in errors:
                             st.write(f"- {e}")
 
