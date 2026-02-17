@@ -4,9 +4,24 @@ from database import get_db
 from models import Insumo, Mall, ActivityType, Company, OI, User
 from auth import require_role, hash_password
 import bcrypt
+import streamlit as st
+from database import engine
+from models import Base
 
 require_role(["ADMIN", "AUTORIZADO"])
 db = next(get_db())
+
+with st.sidebar:
+    st.divider()
+    if st.button("♻️ BORRAR Y RECREAR DB (Reset)", type="primary"):
+        # 1. Esto BORRA la base de datos vieja (Elimina el error)
+        Base.metadata.drop_all(bind=engine)
+        
+        # 2. Esto CREA la base de datos nueva (Con las columnas nuevas)
+        Base.metadata.create_all(bind=engine)
+        
+        st.success("¡Base de datos nueva creada! Recargando...")
+        st.rerun()
 
 st.title("Administración de Catálogos (Editable)")
 st.info("💡 Tip: Edita los datos directamente en las tablas y presiona 'Guardar Cambios'.")
