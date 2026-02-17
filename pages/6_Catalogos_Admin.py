@@ -60,20 +60,36 @@ with tab1:
     uploaded_insumos = st.file_uploader("Subir CSV de Insumos", type=["csv"], key="csv_insumos")
 
     if uploaded_insumos:
-        # INTENTO 1: Leer con coma (Estándar)
+        # --- LÓGICA DE LECTURA ROBUSTA (UTF-8 y LATIN-1) ---
         try:
+            # Intento 1: Leer normal (UTF-8 y coma)
             df_insumos = pd.read_csv(uploaded_insumos)
-            # Si detectamos que solo hay 1 columna, probablemente sea punto y coma
+            
+            # Chequeo de Separador: Si solo detectó 1 columna, seguro era punto y coma
             if df_insumos.shape[1] < 2:
-                uploaded_insumos.seek(0) # Regresar al inicio del archivo
+                uploaded_insumos.seek(0)
                 df_insumos = pd.read_csv(uploaded_insumos, sep=';')
-        except:
-            st.error("Error leyendo el archivo. Asegúrate que sea un CSV válido.")
+
+        except UnicodeDecodeError:
+            # Intento 2: Si falla por tildes/ñ, probamos codificación 'latin-1' (Excel Español)
+            uploaded_insumos.seek(0)
+            try:
+                df_insumos = pd.read_csv(uploaded_insumos, encoding='latin-1')
+                if df_insumos.shape[1] < 2:
+                    uploaded_insumos.seek(0)
+                    df_insumos = pd.read_csv(uploaded_insumos, sep=';', encoding='latin-1')
+            except Exception as e:
+                st.error(f"❌ Error leyendo formato 'Latin-1': {e}")
+                st.stop()
+                
+        except Exception as e:
+            # Si es otro error, lo mostramos explícitamente para saber qué es
+            st.error(f"❌ Error técnico: {e}")
             st.stop()
 
+        # --- A PARTIR DE AQUÍ SIGUE TU CÓDIGO NORMAL DE NORMALIZACIÓN ---
         # Normalizar columnas (minúsculas y sin espacios)
-        df_insumos.columns = [c.lower().strip() for c in df_insumos.columns]
-        
+        df_insumos.columns = [c.lower().strip() for c in df_insumos.columns]        
         # --- MAPEO INTELIGENTE (ESPAÑOL -> INGLÉS) ---
         rename_map = {
             'nombre': 'name', 'insumo': 'name', 'item': 'name',
