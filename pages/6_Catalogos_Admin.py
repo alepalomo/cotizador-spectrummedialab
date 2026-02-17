@@ -32,7 +32,11 @@ def save_changes_generic(model, df_edited, id_col='id'):
         st.error(f"Error al guardar: {e}")
 
 # --- TAB 1: INSUMOS ---
+
 with tab1:
+    # DEFINIMOS LAS CATEGORÍAS FIJAS (Puedes editar esta lista a tu gusto)
+    CATEGORIAS_OPCIONES = ["Bebidas", "Comida", "Decoración", "Entretenimiento", "Extras", "Logos", "Mantenimiento", "Mobiliario", "Pantallas", "Personal", "Servicio", "Sticker"]
+
     st.markdown("### 📤 Carga Masiva de Insumos")
     uploaded_insumos = st.file_uploader("Subir CSV de Insumos", type=["csv"], key="csv_insumos")
 
@@ -52,12 +56,14 @@ with tab1:
         df_insumos.columns = [c.lower().strip() for c in df_insumos.columns]
         
         # --- MAPEO INTELIGENTE (ESPAÑOL -> INGLÉS) ---
-        # Esto permite que subas archivos con encabezados en español
         rename_map = {
             'nombre': 'name', 'insumo': 'name', 'item': 'name',
             'costo': 'cost_gtq', 'precio': 'cost_gtq', 'cost': 'cost_gtq',
             'unidad': 'unit_type', 'medida': 'unit_type', 'tipo': 'unit_type',
-            'cobro': 'billing_mode', 'modo': 'billing_mode'
+            'cobro': 'billing_mode', 'modo': 'billing_mode',
+            # NUEVOS CAMPOS
+            'categoria': 'category', 'cat': 'category',
+            'descripcion': 'description', 'detalle': 'description', 'desc': 'description'
         }
         df_insumos.rename(columns=rename_map, inplace=True)
         
@@ -86,11 +92,20 @@ with tab1:
                     except:
                         cost_val = 0.0
 
+                    # Limpieza de textos nuevos
+                    cat_val = row.get('category', None)
+                    if pd.isna(cat_val): cat_val = "Varios" # Default si no trae
+                    
+                    desc_val = row.get('description', "")
+                    if pd.isna(desc_val): desc_val = ""
+
                     new_obj = Insumo(
                         name=name_val,
                         unit_type=row.get('unit_type', 'UNIDAD'), 
                         cost_gtq=cost_val,
-                        billing_mode=row.get('billing_mode', 'MULTIPLICABLE')
+                        billing_mode=row.get('billing_mode', 'MULTIPLICABLE'),
+                        category=str(cat_val),        # <--- NUEVO
+                        description=str(desc_val)     # <--- NUEVO
                     )
                     new_objects.append(new_obj)
                     existing_names.add(name_val) 
@@ -106,14 +121,33 @@ with tab1:
 
     with st.expander("➕ Crear Nuevo Insumo"):
         with st.form("add_ins"):
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2 = st.columns(2)
             name = c1.text_input("Nombre")
-            cost = c2.number_input("Costo GTQ", min_value=0.0)
-            mode = c3.selectbox("Modo", ["MULTIPLICABLE", "POR_ACTIVIDAD"])
-            unit = c4.selectbox("Unidad", ["HORA", "DIA", "UNIDAD"])
+            cat = c2.selectbox("Categoría", CATEGORIAS_OPCIONES) # <--- NUEVO
+            
+            c3, c4, c5 = st.columns(3)
+            cost = c3.number_input("Costo GTQ", min_value=0.0)
+            mode = c4.selectbox("Modo", ["MULTIPLICABLE", "POR_ACTIVIDAD"])
+            unit = c5.selectbox("Unidad", ["HORA", "DIA", "UNIDAD"])
+            
+            desc = st.text_area("Descripción (Opcional)") # <--- NUEVO
+
             if st.form_submit_button("Agregar"):
-                try: db.add(Insumo(name=name, unit_type=unit, cost_gtq=cost, billing_mode=mode)); db.commit(); st.rerun()
-                except: st.error("Error: Duplicado")
+                try: 
+                    # AGREGAMOS LOS CAMPOS NUEVOS AL OBJETO
+                    db.add(Insumo(
+                        name=name, 
+                        unit_type=unit, 
+                        cost_gtq=cost, 
+                        billing_mode=mode,
+                        category=cat,
+                        description=desc
+                    )) 
+                    db.commit()
+                    st.success("Agregado exitosamente")
+                    st.rerun()
+                except Exception as e: 
+                    st.error(f"Error: {e}")
     
     st.markdown("### ✏️ Editor de Insumos")
     st.caption("Puedes agregar filas nuevas al final o borrar seleccionando la fila y presionando la tecla 'Supr' o el ícono de basurero.")
@@ -127,6 +161,8 @@ with tab1:
         {
             "id": i.id,
             "name": i.name,
+            "category": i.category,       # <--- NUEVO
+            "description": i.description, # <--- NUEVO
             "cost_gtq": float(i.cost_gtq),
             "unit_type": i.unit_type,
             "billing_mode": i.billing_mode
@@ -134,19 +170,31 @@ with tab1:
         for i in insumos_list
     ])
 
-    # 2. Configurar el Editor con num_rows="dynamic" (Esto activa el añadir/borrar nativo)
+    # 2. Configurar el Editor
     column_cfg_ins = {
-        "id": st.column_config.NumberColumn(disabled=True, width="small"), # ID no editable
+        "id": st.column_config.NumberColumn(disabled=True, width="small"), 
         "name": st.column_config.TextColumn("Insumo/Servicio", required=True, width="medium"),
         "cost_gtq": st.column_config.NumberColumn("Costo Q", min_value=0, format="Q%.2f", width="small"),
         "unit_type": st.column_config.SelectboxColumn("Unidad", options=["UNIDAD", "DIA", "GLOBAL", "HORA"], required=True, width="small"),
-        "billing_mode": st.column_config.SelectboxColumn("Modo Cobro", options=["MULTIPLICABLE", "FIJO"], required=True, width="small")
+        "billing_mode": st.column_config.SelectboxColumn("Modo Cobro", options=["MULTIPLICABLE", "FIJO"], required=True, width="small"),
+        # CONFIGURACIÓN DE LAS NUEVAS COLUMNAS
+        "category": st.column_config.SelectboxColumn(
+            "Categoría", 
+            options=CATEGORIAS_OPCIONES, 
+            required=False, 
+            width="medium"
+        ),
+        "description": st.column_config.TextColumn(
+            "Descripción", 
+            width="large",
+            help="Texto que aparecerá abajo del insumo al cotizar"
+        )
     }
 
     edited_insumos = st.data_editor(
         df_insumos, 
         column_config=column_cfg_ins, 
-        num_rows="dynamic", # <--- ESTO ACTIVA EL BOTÓN DE BORRAR Y AGREGAR
+        num_rows="dynamic", 
         hide_index=True, 
         use_container_width=True,
         key="editor_insumos_main"
@@ -155,9 +203,7 @@ with tab1:
     # 3. Lógica Inteligente de Guardado
     if st.button("💾 Guardar Cambios (Insumos)"):
         # A. DETECTAR BORRADOS
-        # Obtenemos los IDs que quedaron en la tabla después de editar
         ids_remanentes = set(edited_insumos["id"].dropna().astype(int).tolist())
-        # La diferencia son los que el usuario borró
         ids_a_borrar = ids_originales - ids_remanentes
         
         deleted_count = 0
@@ -178,6 +224,9 @@ with tab1:
                     item.cost_gtq = row["cost_gtq"]
                     item.unit_type = row["unit_type"]
                     item.billing_mode = row["billing_mode"]
+                    # ACTUALIZAR NUEVOS CAMPOS
+                    item.category = row.get("category")
+                    item.description = row.get("description")
                     updated_count += 1
             # Si NO tiene ID (es NaN), es un registro NUEVO
             else:
@@ -185,14 +234,16 @@ with tab1:
                     name=row["name"],
                     cost_gtq=row["cost_gtq"],
                     unit_type=row["unit_type"],
-                    billing_mode=row["billing_mode"]
+                    billing_mode=row["billing_mode"],
+                    # INSERTAR NUEVOS CAMPOS
+                    category=row.get("category"),
+                    description=row.get("description")
                 )
                 db.add(new_item)
                 new_count += 1
         
         db.commit()
         
-        # Mensaje de éxito detallado
         msg = "✅ Procesado: "
         if deleted_count: msg += f"🗑️ {deleted_count} borrados. "
         if new_count: msg += f"✨ {new_count} nuevos. "

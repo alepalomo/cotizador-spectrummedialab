@@ -123,28 +123,82 @@ if 'current_quote_id' in st.session_state:
         
         # 2.1 AGREGAR NUEVO INSUMO
         with st.container():
-            c_i, c_q, c_u, c_b = st.columns([3, 1, 1, 1])
-            insumos = db.query(Insumo).filter(Insumo.is_active==True).all()
+            st.markdown("##### ➕ Agregar Elementos")
             
-            if insumos:
-                sel_ins = c_i.selectbox("Seleccionar Insumo", insumos, format_func=lambda x: f"{x.name} (Q{x.cost_gtq})")
-                qty = c_q.number_input("Personas", min_value=1, value=1, step=1, format="%d")
+            # Cargamos todos los activos
+            all_insumos = db.query(Insumo).filter(Insumo.is_active==True).all()
+            
+            if all_insumos:
+                # --- FILA 1: FILTRO Y SELECCIÓN ---
+                col_cat, col_sel = st.columns([1, 3])
                 
-                u_val = 1
-                if sel_ins.billing_mode == "MULTIPLICABLE":
-                    u_val = c_u.number_input(f"Cant. {sel_ins.unit_type}", min_value=1, value=1, step=1, format="%d")
+                with col_cat:
+                    # Obtenemos categorías únicas (evitando nulos)
+                    cats_disponibles = sorted({i.category for i in all_insumos if i.category})
+                    cats_disponibles = ["Todas"] + cats_disponibles
+                    filtro_cat = st.selectbox("📂 Filtrar Categoría", cats_disponibles)
+                
+                # Aplicamos el filtro en memoria
+                if filtro_cat != "Todas":
+                    insumos_filtrados = [i for i in all_insumos if i.category == filtro_cat]
                 else:
-                    c_u.info("Cobro fijo")
-                    
-                if c_b.button("➕ Agregar"):
-                    cost = (sel_ins.cost_gtq * qty * u_val) if sel_ins.billing_mode == "MULTIPLICABLE" else (sel_ins.cost_gtq * qty)
-                    rate = get_active_rate(db)
-                    line = QuoteLine(quote_id=quote.id, insumo_id=sel_ins.id, qty_personas=qty, units_value=u_val, line_cost_gtq=cost, line_cost_usd=cost/rate)
-                    db.add(line)
-                    db.commit()
-                    calculate_quote_totals(db, quote.id)
-                    st.rerun()
+                    insumos_filtrados = all_insumos
 
+                with col_sel:
+                    sel_ins = st.selectbox(
+                        "Seleccionar Insumo", 
+                        insumos_filtrados, 
+                        format_func=lambda x: f"{x.name} (Q{x.cost_gtq})",
+                        placeholder="Escribe para buscar..."
+                    )
+
+                # --- FILA 2: DESCRIPCIÓN (REQUERIMIENTO NUEVO) ---
+                # Solo se muestra si el insumo tiene descripción
+                if sel_ins and sel_ins.description:
+                    st.info(f"ℹ️ **Detalle:** {sel_ins.description}")
+
+                # --- FILA 3: CANTIDADES Y BOTÓN ---
+                c_q, c_u, c_b = st.columns([1, 1, 1])
+                
+                with c_q:
+                    qty = st.number_input("Personas", min_value=1, value=1, step=1, format="%d")
+                
+                with c_u:
+                    # Lógica de unidades según modo de cobro
+                    if sel_ins.billing_mode == "MULTIPLICABLE":
+                        u_val = st.number_input(f"Cant. ({sel_ins.unit_type})", min_value=1, value=1, step=1, format="%d")
+                    else:
+                        st.caption(f"Cobro fijo ({sel_ins.unit_type})") # Caption se ve más limpio que info aquí
+                        u_val = 1
+                
+                with c_b:
+                    st.write("") # Espaciadores para alinear el botón abajo
+                    st.write("")
+                    if st.button("➕ Agregar a la Lista", use_container_width=True):
+                        # Cálculo del costo
+                        if sel_ins.billing_mode == "MULTIPLICABLE":
+                            cost_gtq = sel_ins.cost_gtq * qty * u_val
+                        else:
+                            cost_gtq = sel_ins.cost_gtq * qty
+                            
+                        rate = get_active_rate(db)
+                        
+                        # Crear la línea
+                        line = QuoteLine(
+                            quote_id=quote.id, 
+                            insumo_id=sel_ins.id, 
+                            qty_personas=qty, 
+                            units_value=u_val, 
+                            line_cost_gtq=cost_gtq, 
+                            line_cost_usd=cost_gtq/rate
+                        )
+                        db.add(line)
+                        db.commit()
+                        
+                        # Recalcular totales y refrescar
+                        calculate_quote_totals(db, quote.id)
+                        st.rerun()
+                        
         # 2.2 TABLA EDITABLE (MODIFICAR / BORRAR)
         st.markdown("##### 📝 Listado de Elementos")
         
