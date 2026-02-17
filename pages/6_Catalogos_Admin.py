@@ -360,115 +360,123 @@ with tab2:
         st.write("---")
         st.subheader("📋 Listado y Edición de OIs")
 
-        # 1. Recuperar datos (Malls y OIs) con seguridad
+        # 1. Cargar datos necesarios (Malls y OIs)
         try:
+            # Diccionarios para convertir ID <-> Nombre del Mall rápidamente
             malls_db = db.query(Mall).all()
-            # Creamos diccionarios para traducir ID <-> Nombre
             mall_id_to_name = {m.id: m.name for m in malls_db}
             mall_name_to_id = {m.name: m.id for m in malls_db}
-            
+            mall_names_list = list(mall_name_to_id.keys())
+
             ois_db = db.query(OI).order_by(OI.id).all()
         except Exception:
             db.rollback()
-            st.error("Error de conexión. Intentando reconectar...")
-            st.rerun()
+            st.error("Error de conexión. Refresca la página.")
+            st.stop()
 
         if ois_db:
-            # 2. Preparar el DataFrame para la tabla
-            # Convertimos los datos de la DB a un formato amigable para editar
-            df_ois = pd.DataFrame([
-                {
+            # 2. Preparar el DataFrame
+            # Creamos una columna 'Eliminar' al principio inicializada en False
+            data_for_df = []
+            for o in ois_db:
+                data_for_df.append({
+                    "Eliminar": False,  # La casilla roja
                     "id": o.id,
-                    "Mall": mall_id_to_name.get(o.mall_id, "Desconocido"), # Mostramos Nombre, no ID
+                    "Mall": mall_id_to_name.get(o.mall_id, "Desconocido"),
                     "Codigo": o.oi_code,
                     "Nombre": o.oi_name,
-                    "Presupuesto": o.annual_budget_usd,
-                    "Eliminar": False  # Casilla para marcar borrado
-                } for o in ois_db
-            ])
+                    "Presupuesto": o.annual_budget_usd
+                })
+            
+            df_ois = pd.DataFrame(data_for_df)
 
-            # 3. Configurar el Editor
+            # 3. Configurar el Editor (Igual a tu imagen)
             edited_df = st.data_editor(
                 df_ois,
-                key="editor_ois_main",
-                hide_index=True,
+                key="editor_ois_checkbox",
+                hide_index=True,  # Ocultamos el índice numérico feo
                 use_container_width=True,
                 column_config={
-                    "id": st.column_config.NumberColumn(disabled=True, width="small"), # ID no editable
-                    "Mall": st.column_config.SelectboxColumn(
-                        "Mall",
-                        help="Selecciona el Mall",
-                        width="medium",
-                        options=list(mall_name_to_id.keys()), # Dropdown con nombres de Malls
-                        required=True
-                    ),
-                    "Codigo": st.column_config.TextColumn("Código OI", width="medium"), # Forzamos texto para evitar decimales
-                    "Nombre": st.column_config.TextColumn("Descripción", width="large"),
-                    "Presupuesto": st.column_config.NumberColumn(
-                        "Presupuesto ($)", 
-                        format="$%.2f",
-                        min_value=0,
-                        step=100
-                    ),
                     "Eliminar": st.column_config.CheckboxColumn(
-                        "🗑️", 
-                        help="Marca para eliminar este registro",
+                        "Borrar",
+                        help="Marca para eliminar esta OI",
                         default=False,
                         width="small"
+                    ),
+                    "id": st.column_config.NumberColumn(
+                        "ID", 
+                        disabled=True, 
+                        width="small"
+                    ),
+                    "Mall": st.column_config.SelectboxColumn(
+                        "Mall",
+                        width="medium",
+                        options=mall_names_list, # Menú desplegable con los nombres
+                        required=True
+                    ),
+                    "Codigo": st.column_config.TextColumn(
+                        "Código OI", 
+                        width="medium",
+                        help="Código sin decimales"
+                    ),
+                    "Nombre": st.column_config.TextColumn(
+                        "Nombre OI", 
+                        width="large"
+                    ),
+                    "Presupuesto": st.column_config.NumberColumn(
+                        "Presupuesto ($)",
+                        format="$%.2f",
+                        min_value=0
                     )
                 }
             )
 
-            # 4. Botón de Guardado con Lógica de Base de Datos
-            if st.button("💾 Guardar Cambios en OIs", type="primary"):
-                try:
-                    changes_count = 0
-                    
-                    # A) PROCESAR ELIMINACIONES
-                    rows_to_delete = edited_df[edited_df["Eliminar"] == True]
-                    if not rows_to_delete.empty:
-                        ids_to_del = rows_to_delete["id"].tolist()
-                        # Borramos masivamente los IDs marcados
-                        db.query(OI).filter(OI.id.in_(ids_to_del)).delete(synchronize_session=False)
-                        changes_count += len(ids_to_del)
-
-                    # B) PROCESAR EDICIONES (Solo de filas NO marcadas para borrar)
-                    rows_to_update = edited_df[edited_df["Eliminar"] == False]
-                    
-                    for index, row in rows_to_update.iterrows():
-                        # Buscamos el objeto original en la DB
-                        original_oi = db.query(OI).get(row["id"])
+            # 4. Botón de Acción
+            col_btn1, col_btn2 = st.columns([1, 4])
+            with col_btn1:
+                if st.button("💾 Guardar Cambios", type="primary"):
+                    try:
+                        # A) BORRAR: Filtramos las filas donde "Eliminar" es True
+                        rows_to_delete = edited_df[edited_df["Eliminar"] == True]
+                        ids_to_delete = rows_to_delete["id"].tolist()
                         
-                        if original_oi:
-                            # Recuperamos el ID del Mall basado en el nombre seleccionado
-                            new_mall_id = mall_name_to_id.get(row["Mall"])
-                            
-                            # Verificamos si algo cambió para no hacer updates innecesarios
-                            if (original_oi.oi_name != row["Nombre"] or 
-                                original_oi.oi_code != str(row["Codigo"]) or 
-                                original_oi.annual_budget_usd != float(row["Presupuesto"]) or
-                                original_oi.mall_id != new_mall_id):
-                                
-                                original_oi.oi_name = row["Nombre"]
-                                original_oi.oi_code = str(row["Codigo"]) # Aseguramos string
-                                original_oi.annual_budget_usd = float(row["Presupuesto"])
-                                original_oi.mall_id = new_mall_id
-                                changes_count += 1
-                    
-                    if changes_count > 0:
-                        db.commit()
-                        st.toast(f"✅ Se actualizaron {changes_count} registros.", icon="🎉")
-                        st.rerun() # Recargamos para ver los cambios limpios
-                    else:
-                        st.info("No se detectaron cambios para guardar.")
+                        if ids_to_delete:
+                            # Borrado masivo seguro
+                            db.query(OI).filter(OI.id.in_(ids_to_delete)).delete(synchronize_session=False)
 
-                except Exception as e:
-                    db.rollback() # Importantísimo por si hay códigos duplicados
-                    st.error(f"Error al guardar: {e}")
+                        # B) EDITAR: Revisamos las filas que NO se van a borrar
+                        rows_to_update = edited_df[edited_df["Eliminar"] == False]
+                        
+                        # Iteramos para actualizar cambios
+                        for index, row in rows_to_update.iterrows():
+                            # Buscamos la OI original en la base de datos
+                            original_oi = db.query(OI).get(row["id"])
+                            
+                            if original_oi:
+                                # Obtenemos el ID del Mall basado en el nombre seleccionado
+                                current_mall_id = mall_name_to_id.get(row["Mall"])
+                                
+                                # Actualizamos campos (forzando string en Código para evitar .0)
+                                if original_oi.mall_id != current_mall_id:
+                                    original_oi.mall_id = current_mall_id
+                                if original_oi.oi_code != str(row["Codigo"]):
+                                    original_oi.oi_code = str(row["Codigo"])
+                                if original_oi.oi_name != row["Nombre"]:
+                                    original_oi.oi_name = row["Nombre"]
+                                if original_oi.annual_budget_usd != float(row["Presupuesto"]):
+                                    original_oi.annual_budget_usd = float(row["Presupuesto"])
+                        
+                        db.commit()
+                        st.toast("✅ Cambios guardados y registros eliminados.", icon="🚀")
+                        st.rerun()
+
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Error al guardar: {e}")
 
         else:
-            st.info("Aún no hay OIs cargadas. Usa el formulario de arriba o la carga masiva.")
-
+            st.info("No hay OIs cargadas. Usa el panel de arriba para agregar.")
+            
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
     st.markdown("### 📤 Carga Masiva de Tipos de Actividad")
