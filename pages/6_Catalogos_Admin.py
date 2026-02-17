@@ -317,57 +317,47 @@ with tab2:
             
             if uploaded_oi and st.button("Procesar Archivo"):
                 try:
-                    # 1. Manejo robusto de la lectura
+                    # 1. Carga de datos
                     if uploaded_oi.name.endswith('.csv'):
-                        # encoding='utf-8-sig' elimina el BOM de Excel
-                        # sep=None con engine='python' detecta automáticamente si es coma o punto y coma
                         df_load = pd.read_csv(uploaded_oi, encoding='utf-8-sig', sep=None, engine='python')
                     else:
                         df_load = pd.read_excel(uploaded_oi)
 
-                    # 2. Limpieza de nombres de columnas (quita espacios extra o caracteres raros)
                     df_load.columns = df_load.columns.str.strip()
-
                     existing_malls = {m.name: m.id for m in db.query(Mall).all()}
-                    count = 0
+                    existing_oi_codes = {o.oi_code for o in db.query(OI.oi_code).all()}
                     
+                    count = 0
                     for _, row in df_load.iterrows():
-                        # 3. Limpieza del valor de la celda
+                        # --- PROCESAMIENTO DEL CÓDIGO COMO ENTERO ---
+                        # Convertimos a numérico primero, luego a entero y finalmente a string para la DB
+                        try:
+                            raw_val = pd.to_numeric(row['Codigo'])
+                            clean_code = str(int(raw_val)) # Esto elimina cualquier .0
+                        except:
+                            clean_code = str(row['Codigo']).strip() # Fallback por si no es numérico
+                        # --------------------------------------------
+
                         mall_name = str(row['Mall']).strip()
                         
-                        if mall_name in existing_malls:
+                        if mall_name in existing_malls and clean_code not in existing_oi_codes:
                             db.add(OI(
                                 mall_id=existing_malls[mall_name], 
-                                oi_code=str(row['Codigo']), 
+                                oi_code=clean_code, # Se guarda como "300000000000"
                                 oi_name=str(row['Nombre']), 
                                 annual_budget_usd=float(row['Presupuesto'])
                             ))
+                            existing_oi_codes.add(clean_code)
                             count += 1
                     
                     db.commit()
-                    st.success(f"✅ {count} OIs cargadas correctamente.")
+                    st.success(f"✅ {count} OIs cargadas sin decimales.")
                     st.rerun()
                     
-                except KeyError as e:
-                    st.error(f"Error: No se encontró la columna {e}. Revisa que el encabezado sea exactamente 'Mall'.")
                 except Exception as e:
-                    st.error(f"Error inesperado: {e}")
-                # Tabla OIs
-                ois = db.query(OI).all()
-                malls_map = {m.name: m.id for m in db.query(Mall).all()}
-                if ois:
-                    data_ois = [{"id": o.id, "mall_name": next((name for name, id_ in malls_map.items() if id_ == o.mall_id), "Sin Asignar"), "oi_code": o.oi_code, "oi_name": o.oi_name, "annual_budget_usd": o.annual_budget_usd} for o in ois]
-                    ed_o = st.data_editor(pd.DataFrame(data_ois), column_config={"id": st.column_config.NumberColumn(disabled=True, width="small"), "mall_name": st.column_config.SelectboxColumn("Mall", options=list(malls_map.keys()), required=True)}, hide_index=True, key="ed_ois")
-                    if st.button("Guardar OIs"):
-                        try:
-                            for row in ed_o.to_dict('records'):
-                                obj = db.query(OI).get(row['id'])
-                                if obj:
-                                    obj.oi_code = row['oi_code']; obj.oi_name = row['oi_name']; obj.annual_budget_usd = row['annual_budget_usd']
-                                    if row['mall_name'] in malls_map: obj.mall_id = malls_map[row['mall_name']]
-                            db.commit(); st.rerun()
-                        except Exception as e: st.error(str(e))
-
+                    db.rollback()
+                    st.error(f"Error: {e}")
+                    
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
     st.markdown("### 📤 Carga Masiva de Tipos de Actividad")
