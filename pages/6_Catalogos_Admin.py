@@ -13,15 +13,19 @@ db = next(get_db())
 
 with st.sidebar:
     st.divider()
-    if st.button("♻️ BORRAR Y RECREAR DB (Reset)", type="primary"):
-        # 1. Esto BORRA la base de datos vieja (Elimina el error)
-        Base.metadata.drop_all(bind=engine)
-        
-        # 2. Esto CREA la base de datos nueva (Con las columnas nuevas)
-        Base.metadata.create_all(bind=engine)
-        
-        st.success("¡Base de datos nueva creada! Recargando...")
-        st.rerun()
+    st.error("⚠️ ZONA DE PELIGRO")
+    if st.button("☢️ HARD RESET DB (Borrar Todo)", type="primary"):
+        try:
+            # 1. Borra las tablas viejas en la nube
+            Base.metadata.drop_all(bind=engine)
+            
+            # 2. Crea las tablas nuevas (con category y description)
+            Base.metadata.create_all(bind=engine)
+            
+            st.success("✅ ¡Base de datos en la nube reseteada!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 st.title("Administración de Catálogos (Editable)")
 st.info("💡 Tip: Edita los datos directamente en las tablas y presiona 'Guardar Cambios'.")
