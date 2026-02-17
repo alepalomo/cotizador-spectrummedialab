@@ -360,123 +360,113 @@ with tab2:
         st.write("---")
         st.subheader("📋 Listado y Edición de OIs")
 
-        # 1. Cargar datos necesarios (Malls y OIs)
+        # 1. Cargar datos frescos de la Base de Datos
         try:
-            # Diccionarios para convertir ID <-> Nombre del Mall rápidamente
             malls_db = db.query(Mall).all()
+            # Mapeos para traducir ID <-> Nombre
             mall_id_to_name = {m.id: m.name for m in malls_db}
             mall_name_to_id = {m.name: m.id for m in malls_db}
             mall_names_list = list(mall_name_to_id.keys())
 
             ois_db = db.query(OI).order_by(OI.id).all()
+            # Guardamos los IDs originales para saber cuáles se borraron después
+            original_ids = {o.id for o in ois_db}
+
         except Exception:
             db.rollback()
-            st.error("Error de conexión. Refresca la página.")
+            st.error("Error cargando datos. Refresca la página.")
             st.stop()
 
         if ois_db:
             # 2. Preparar el DataFrame
-            # Creamos una columna 'Eliminar' al principio inicializada en False
-            data_for_df = []
-            for o in ois_db:
-                data_for_df.append({
-                    "Eliminar": False,  # La casilla roja
+            df_ois = pd.DataFrame([
+                {
                     "id": o.id,
                     "Mall": mall_id_to_name.get(o.mall_id, "Desconocido"),
                     "Codigo": o.oi_code,
                     "Nombre": o.oi_name,
                     "Presupuesto": o.annual_budget_usd
-                })
-            
-            df_ois = pd.DataFrame(data_for_df)
+                } for o in ois_db
+            ])
 
-            # 3. Configurar el Editor (Igual a tu imagen)
+            # 3. Configurar el Editor con num_rows="dynamic"
+            # ESTO ES LO QUE ACTIVA EL BASURERO Y EL BOTÓN DE AÑADIR (+)
             edited_df = st.data_editor(
                 df_ois,
-                key="editor_ois_checkbox",
-                hide_index=True,  # Ocultamos el índice numérico feo
+                key="editor_ois_dynamic",
+                num_rows="dynamic", # <--- ¡LA CLAVE!
                 use_container_width=True,
+                hide_index=True,
                 column_config={
-                    "Eliminar": st.column_config.CheckboxColumn(
-                        "Borrar",
-                        help="Marca para eliminar esta OI",
-                        default=False,
-                        width="small"
-                    ),
-                    "id": st.column_config.NumberColumn(
-                        "ID", 
-                        disabled=True, 
-                        width="small"
-                    ),
+                    "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
                     "Mall": st.column_config.SelectboxColumn(
                         "Mall",
-                        width="medium",
-                        options=mall_names_list, # Menú desplegable con los nombres
-                        required=True
+                        options=mall_names_list,
+                        required=True,
+                        width="medium"
                     ),
-                    "Codigo": st.column_config.TextColumn(
-                        "Código OI", 
-                        width="medium",
-                        help="Código sin decimales"
-                    ),
-                    "Nombre": st.column_config.TextColumn(
-                        "Nombre OI", 
-                        width="large"
-                    ),
+                    "Codigo": st.column_config.TextColumn("Código OI", width="medium"),
+                    "Nombre": st.column_config.TextColumn("Nombre OI", width="large"),
                     "Presupuesto": st.column_config.NumberColumn(
-                        "Presupuesto ($)",
-                        format="$%.2f",
-                        min_value=0
+                        "Presupuesto ($)", format="$%.2f", min_value=0
                     )
                 }
             )
 
-            # 4. Botón de Acción
-            col_btn1, col_btn2 = st.columns([1, 4])
-            with col_btn1:
-                if st.button("💾 Guardar Cambios", type="primary"):
-                    try:
-                        # A) BORRAR: Filtramos las filas donde "Eliminar" es True
-                        rows_to_delete = edited_df[edited_df["Eliminar"] == True]
-                        ids_to_delete = rows_to_delete["id"].tolist()
-                        
-                        if ids_to_delete:
-                            # Borrado masivo seguro
-                            db.query(OI).filter(OI.id.in_(ids_to_delete)).delete(synchronize_session=False)
+            # 4. Lógica de Sincronización (Detectar Borrados, Ediciones y Nuevos)
+            if st.button("💾 Guardar Cambios en OIs", type="primary"):
+                try:
+                    # A) DETECTAR BORRADOS
+                    # IDs que están en la tabla editada
+                    current_ids = set(edited_df["id"].dropna().astype(int).tolist())
+                    # IDs que estaban en la DB pero ya no están en la tabla (fueron borrados)
+                    ids_to_delete = original_ids - current_ids
+                    
+                    if ids_to_delete:
+                        db.query(OI).filter(OI.id.in_(ids_to_delete)).delete(synchronize_session=False)
 
-                        # B) EDITAR: Revisamos las filas que NO se van a borrar
-                        rows_to_update = edited_df[edited_df["Eliminar"] == False]
-                        
-                        # Iteramos para actualizar cambios
-                        for index, row in rows_to_update.iterrows():
-                            # Buscamos la OI original en la base de datos
-                            original_oi = db.query(OI).get(row["id"])
-                            
-                            if original_oi:
-                                # Obtenemos el ID del Mall basado en el nombre seleccionado
-                                current_mall_id = mall_name_to_id.get(row["Mall"])
-                                
-                                # Actualizamos campos (forzando string en Código para evitar .0)
-                                if original_oi.mall_id != current_mall_id:
-                                    original_oi.mall_id = current_mall_id
-                                if original_oi.oi_code != str(row["Codigo"]):
-                                    original_oi.oi_code = str(row["Codigo"])
-                                if original_oi.oi_name != row["Nombre"]:
-                                    original_oi.oi_name = row["Nombre"]
-                                if original_oi.annual_budget_usd != float(row["Presupuesto"]):
-                                    original_oi.annual_budget_usd = float(row["Presupuesto"])
-                        
-                        db.commit()
-                        st.toast("✅ Cambios guardados y registros eliminados.", icon="🚀")
-                        st.rerun()
+                    # B) DETECTAR NUEVOS Y EDICIONES
+                    for index, row in edited_df.iterrows():
+                        # Obtenemos el ID del Mall seleccionado
+                        mall_id_sel = mall_name_to_id.get(row["Mall"])
 
-                    except Exception as e:
-                        db.rollback()
-                        st.error(f"Error al guardar: {e}")
+                        # Caso 1: Fila Nueva (No tiene ID o es NaN)
+                        if pd.isna(row["id"]):
+                            new_oi = OI(
+                                mall_id=mall_id_sel,
+                                oi_code=str(row["Codigo"]), # Forzamos string
+                                oi_name=str(row["Nombre"]),
+                                annual_budget_usd=float(row["Presupuesto"] or 0)
+                            )
+                            db.add(new_oi)
+                        
+                        # Caso 2: Fila Existente (Tiene ID) - Actualizamos
+                        else:
+                            oi_id = int(row["id"])
+                            if oi_id in original_ids:
+                                existing_oi = db.query(OI).get(oi_id)
+                                if existing_oi:
+                                    # Solo actualizamos si cambiaron los datos
+                                    if (existing_oi.mall_id != mall_id_sel or 
+                                        existing_oi.oi_code != str(row["Codigo"]) or
+                                        existing_oi.oi_name != str(row["Nombre"]) or
+                                        existing_oi.annual_budget_usd != float(row["Presupuesto"])):
+                                        
+                                        existing_oi.mall_id = mall_id_sel
+                                        existing_oi.oi_code = str(row["Codigo"])
+                                        existing_oi.oi_name = str(row["Nombre"])
+                                        existing_oi.annual_budget_usd = float(row["Presupuesto"])
+
+                    db.commit()
+                    st.toast("✅ Cambios guardados exitosamente.", icon="🚀")
+                    st.rerun()
+
+                except Exception as e:
+                    db.rollback()
+                    st.error(f"Error al guardar: {e}")
 
         else:
-            st.info("No hay OIs cargadas. Usa el panel de arriba para agregar.")
-            
+            st.info("No hay OIs cargadas. Usa el panel de arriba para agregar.")            
 # --- TAB 3: ACTIVIDADES ---
 with tab3:
     st.markdown("### 📤 Carga Masiva de Tipos de Actividad")
