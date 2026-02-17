@@ -327,35 +327,96 @@ with tab2:
             ois_data = db.query(OI).all()
         # Carga CSV OIs
         with st.expander("📂 Carga Masiva OIs (CSV)"):
+            st.info("Formato esperado: Mall, Codigo, Nombre, Presupuesto")
             uploaded_oi = st.file_uploader("Sube CSV", type=["csv", "xlsx"])
+            
             if uploaded_oi and st.button("Procesar Archivo"):
                 try:
-                    # Detectar formato y limpiar
-                    df_load = pd.read_csv(uploaded_oi, encoding='utf-8-sig', sep=None, engine='python') if uploaded_oi.name.endswith('.csv') else pd.read_excel(uploaded_oi)
+                    # 1. Carga robusta (limpiando espacios en nombres de columnas)
+                    if uploaded_oi.name.endswith('.csv'):
+                        df_load = pd.read_csv(uploaded_oi, encoding='utf-8-sig', sep=None, engine='python')
+                    else:
+                        df_load = pd.read_excel(uploaded_oi)
+                    
+                    # Normalizar encabezados (quitar espacios y poner minúsculas para buscar mejor)
                     df_load.columns = df_load.columns.str.strip()
                     
-                    existing_malls = {m.name: m.id for m in db.query(Mall).all()}
-                    existing_codes = {o.oi_code for o in db.query(OI.oi_code).all()}
+                    # Verificar que existan las columnas clave
+                    required_cols = ['Mall', 'Codigo', 'Nombre', 'Presupuesto']
+                    if not all(col in df_load.columns for col in required_cols):
+                        st.error(f"Error: Faltan columnas. El archivo debe tener: {required_cols}")
+                        st.stop()
+
+                    # 2. Preparar catálogos para búsqueda rápida
+                    # Creamos un diccionario { "miraflores": ID, "oakland place": ID } para ser tolerantes a mayúsculas
+                    malls_map = {m.name.strip().lower(): m.id for m in db.query(Mall).all()}
                     
-                    count = 0
-                    for _, row in df_load.iterrows():
-                        # Limpiar el código de Excel (quitar el .0)
-                        raw_val = pd.to_numeric(row['Codigo'], errors='coerce')
-                        clean_code = str(int(raw_val)) if pd.notnull(raw_val) else str(row['Codigo']).strip()
-                        
-                        mall_name = str(row['Mall']).strip()
-                        
-                        if mall_name in existing_malls and clean_code not in existing_codes:
-                            db.add(OI(mall_id=existing_malls[mall_name], oi_code=clean_code, oi_name=str(row['Nombre']), annual_budget_usd=float(row['Presupuesto'])))
-                            existing_codes.add(clean_code)
-                            count += 1
-                    
+                    created_count = 0
+                    updated_count = 0
+                    errors = []
+
+                    for index, row in df_load.iterrows():
+                        try:
+                            # A) Limpieza de Datos de la Fila
+                            mall_input = str(row['Mall']).strip()
+                            mall_key = mall_input.lower() # Usamos minúsculas para buscar
+                            
+                            # Limpieza del Código (evitar notación científica)
+                            raw_code = row['Codigo']
+                            if isinstance(raw_code, (int, float)):
+                                clean_code = str(int(raw_code))
+                            else:
+                                clean_code = str(raw_code).strip().replace('.0', '')
+
+                            # B) Validar Mall
+                            if mall_key not in malls_map:
+                                errors.append(f"Fila {index+1}: No existe el Mall '{mall_input}'")
+                                continue # Saltamos esta fila
+                            
+                            mall_id_found = malls_map[mall_key]
+                            
+                            # C) Buscar si la OI ya existe (Lógica UPSERT)
+                            existing_oi = db.query(OI).filter(OI.oi_code == clean_code).first()
+                            
+                            if existing_oi:
+                                # --- ACTUALIZAR EXISTENTE ---
+                                existing_oi.mall_id = mall_id_found
+                                existing_oi.oi_name = str(row['Nombre']).strip()
+                                existing_oi.annual_budget_usd = float(row['Presupuesto'])
+                                updated_count += 1
+                            else:
+                                # --- CREAR NUEVA ---
+                                new_oi = OI(
+                                    mall_id=mall_id_found,
+                                    oi_code=clean_code,
+                                    oi_name=str(row['Nombre']).strip(),
+                                    annual_budget_usd=float(row['Presupuesto']),
+                                    is_active=True
+                                )
+                                db.add(new_oi)
+                                created_count += 1
+                                
+                        except Exception as row_e:
+                            errors.append(f"Error en fila {index+1}: {row_e}")
+
+                    # 3. Guardar todo
                     db.commit()
-                    st.success(f"Se cargaron {count} OIs nuevas.")
-                    st.rerun()
+                    
+                    # 4. Reporte de resultados
+                    if created_count > 0 or updated_count > 0:
+                        st.success(f"✅ Proceso terminado: {created_count} creadas, {updated_count} actualizadas.")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ El archivo se procesó pero no se hicieron cambios.")
+                    
+                    if errors:
+                        with st.expander("Ver errores detallados (Filas no cargadas)"):
+                            for e in errors:
+                                st.write(f"- {e}")
+
                 except Exception as e:
-                    db.rollback() # <--- SIEMPRE después de un error en commit
-                    st.error(f"Error en carga masiva: {e}")
+                    db.rollback()
+                    st.error(f"Error general en la carga: {e}")
 
         st.write("---")
         st.subheader("📋 Listado y Edición de OIs")
