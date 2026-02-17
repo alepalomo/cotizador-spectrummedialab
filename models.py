@@ -67,6 +67,8 @@ class Insumo(Base):
     cost_gtq = Column(Float, default=0.0)
     billing_mode = Column(String) 
     is_active = Column(Boolean, default=True)
+    category = Column(String, nullable=True)
+    description = Column(String, nullable=True)
 
 class Quote(Base):
     __tablename__ = "quotes"
