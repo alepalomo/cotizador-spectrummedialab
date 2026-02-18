@@ -809,7 +809,7 @@ with tab5:
                         provider_type = str(row[c_tipo]).strip() if c_tipo and pd.notna(row[c_tipo]) else "Certificado", # Valor por defecto
                         nit = str(row[c_nit]).strip() if c_nit and pd.notna(row[c_nit]) else "",
                         cui = str(row[c_cui]).strip() if c_cui and pd.notna(row[c_cui]) else "",
-                        bank = str(row[c_banco]).strip() if c_banco and pd.notna(row[c_banco]) else "",
+                        bank_name = str(row[c_banco]).strip() if c_banco and pd.notna(row[c_banco]) else "",
                         account_number = str(row[c_cuenta]).strip() if c_cuenta and pd.notna(row[c_cuenta]) else ""
                     )
                     db.add(new_p)
