@@ -22,8 +22,18 @@ st.title("💸 Registro de Gastos Reales")
 
 tab_odc, tab_caja, tab_host = st.tabs(["📝 ODC", "📦 Caja Chica", "🎤 Host / Talento"])
 
-def get_active_activities():
-    return db.query(Quote).filter(Quote.status.in_(["EJECUTADA", "APROBADA"])).all()
+active_quotes = db.query(Quote).filter(Quote.status == "APROBADA").all()
+
+if not active_quotes:
+    st.warning("⚠️ No hay actividades activas (Aprobadas) para cargar gastos.")
+    st.info("Pide al administrador que apruebe una cotización o reactiva una liquidada.")
+    st.stop() # Detiene la app aquí si no hay nada
+
+selected_quote = st.selectbox(
+    "Seleccionar Actividad Aprobada", 
+    active_quotes, 
+    format_func=lambda x: f"{x.activity_name} (Presupuesto: ${x.total_cost_usd:,.2f})"
+)
 
 # --- PESTAÑA 1: ODC ---
 with tab_odc:
