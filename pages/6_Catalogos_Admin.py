@@ -7,6 +7,7 @@ import bcrypt
 import streamlit as st
 from database import engine
 from models import Base
+from sqlalchemy import func
 
 require_role(["ADMIN", "AUTORIZADO"])
 db = next(get_db())
@@ -735,84 +736,85 @@ with tab4:
 with tab5:
     st.subheader("🏢 Catálogo de Proveedores Detallado")
 
-    st.markdown("### 📤 Carga Masiva de Proveedores")
-    uploaded_provs = st.file_uploader("Subir CSV de Proveedores", type=["csv"], key="csv_provs")
+    st.subheader("📥 Carga Masiva de Proveedores")
+    uploaded_prov = st.file_uploader("Sube CSV o Excel de Proveedores", type=["csv", "xlsx"], key="upload_prov_protected")
 
-    if uploaded_provs:
+    if uploaded_prov and st.button("Procesar Proveedores"):
         try:
-            df_prov = pd.read_csv(uploaded_provs)
-            if df_prov.shape[1] < 2:
-                uploaded_provs.seek(0)
-                df_prov = pd.read_csv(uploaded_provs, sep=';')
-        except:
-            st.error("Error leyendo CSV.")
-            st.stop()
+            # --- 1. LECTURA INTELIGENTE (Capa 1) ---
+            if uploaded_prov.name.endswith('.csv'):
+                try:
+                    # Intento A: UTF-8 con detección automática
+                    df_prov = pd.read_csv(uploaded_prov, sep=None, engine='python', encoding='utf-8-sig')
+                except:
+                    # Intento B: Latin-1 (típico de Excel en Español)
+                    uploaded_prov.seek(0)
+                    df_prov = pd.read_csv(uploaded_prov, sep=';', encoding='latin-1')
+            else:
+                # Excel directo
+                df_prov = pd.read_excel(uploaded_prov)
+            
+            # Limpieza de espacios en los encabezados
+            df_prov.columns = df_prov.columns.str.strip()
+            
+            # --- 2. DETECCIÓN DE COLUMNAS ---
+            # Buscamos la columna del nombre, no importa si se llama "Proveedor", "Nombre" o "Empresa"
+            posibles_nombres = ['Proveedor', 'Nombre', 'Empresa', 'Host']
+            col_nombre = next((col for col in posibles_nombres if col in df_prov.columns), None)
+            
+            if not col_nombre:
+                st.error(f"⚠️ No encuentro la columna de nombre. Asegúrate de que tu archivo tenga una columna llamada: {posibles_nombres}")
+                st.stop()
 
-        df_prov.columns = [c.lower().strip() for c in df_prov.columns]
-        
-        # MAPEO INTELIGENTE (Español -> Inglés)
-        rename_map = {
-            'nombre': 'name', 'nombre comercial': 'name', 'empresa': 'name', 'proveedor': 'name',
-            'razon social': 'legal_name', 'razón social': 'legal_name',
-            'tipo': 'provider_type', 'categoria': 'provider_type',
-            'nit': 'nit',
-            'cui': 'cui', 'dpi': 'cui',
-            'banco': 'bank_name',
-            'cuenta': 'account_number', 'numero de cuenta': 'account_number'
-        }
-        df_prov.rename(columns=rename_map, inplace=True)
-        
-        st.write("Columnas detectadas:", df_prov.columns.tolist())
-        
-        if 'name' not in df_prov.columns:
-            st.error("❌ Falta la columna 'Nombre Comercial' o 'Empresa'.")
-        else:
-            if st.button("🚀 Procesar Carga Proveedores"):
-                existing_provs = db.query(Company).all()
-                existing_names = {p.name for p in existing_provs}
-                existing_nits = {p.nit for p in existing_provs if p.nit}
-                
-                new_provs = []
-                skipped = 0
-                
-                for index, row in df_prov.iterrows():
-                    name_val = str(row['name']).strip()
-                    
-                    # Limpieza de NIT (quitar guiones si quieres)
-                    nit_val = str(row.get('nit', '')).strip().upper()
-                    if nit_val == "NAN": nit_val = ""
-                    
-                    # Chequeo de duplicados (Nombre O Nit)
-                    if name_val in existing_names or (nit_val and nit_val in existing_nits):
-                        skipped += 1
-                        continue
-                    
-                    # Limpieza de otros campos para que no diga "nan"
-                    def clean(val):
-                        s = str(val).strip()
-                        return "" if s.lower() == "nan" else s
+            # Opcionales (si no existen, se llenan vacíos)
+            col_servicio = next((col for col in ['Servicio', 'Categoria', 'Tipo'] if col in df_prov.columns), None)
+            col_contacto = next((col for col in ['Contacto', 'Email', 'Telefono'] if col in df_prov.columns), None)
 
-                    new_obj = Company(
-                        name=name_val,
-                        legal_name=clean(row.get('legal_name', '')),
-                        provider_type=clean(row.get('provider_type', 'Directo')),
-                        nit=nit_val,
-                        cui=clean(row.get('cui', '')),
-                        bank_name=clean(row.get('bank_name', '')),
-                        account_number=clean(row.get('account_number', ''))
+            count_new = 0
+            count_skipped = 0
+            
+            # Barra de progreso (visual)
+            progress_bar = st.progress(0)
+            total_rows = len(df_prov)
+
+            for i, (index, row) in enumerate(df_prov.iterrows()):
+                nombre_input = str(row[col_nombre]).strip()
+                
+                if not nombre_input or nombre_input.lower() == 'nan':
+                    continue # Saltar filas vacías
+
+                # --- 3. PROTECCIÓN TOTAL CONTRA DUPLICADOS (Capa 2 y 3) ---
+                # Usamos func.lower() para comparar "uber" == "UBER"
+                existing = db.query(Proveedor).filter(func.lower(Proveedor.name) == nombre_input.lower()).first()
+                
+                if not existing:
+                    # Crear nuevo
+                    new_p = Proveedor(
+                        name=nombre_input, # Guardamos el nombre tal cual viene (respetando mayúsculas originales)
+                        service_type=str(row[col_servicio]) if col_servicio and pd.notna(row[col_servicio]) else "General",
+                        contact_info=str(row[col_contacto]) if col_contacto and pd.notna(row[col_contacto]) else ""
                     )
-                    new_provs.append(new_obj)
-                    existing_names.add(name_val)
-                    if nit_val: existing_nits.add(nit_val)
-
-                if new_provs:
-                    db.add_all(new_provs)
-                    db.commit()
-                    st.success(f"✅ Se agregaron {len(new_provs)} nuevos proveedores.")
+                    db.add(new_p)
+                    count_new += 1
+                else:
+                    count_skipped += 1
                 
-                if skipped > 0:
-                    st.warning(f"⚠️ Se omitieron {skipped} proveedores (ya existían por Nombre o NIT).")
-    
+                # Actualizar barra
+                progress_bar.progress((i + 1) / total_rows)
+            
+            db.commit()
+            st.success(f"✅ Proceso finalizado: {count_new} proveedores nuevos agregados. {count_skipped} ya existían (y se omitieron).")
+            st.balloons()
+            
+            # Recargar la página tras 2 segundos para ver los cambios en la tabla
+            import time
+            time.sleep(2)
+            st.rerun()
+
+        except Exception as e:
+            db.rollback()
+            st.error(f"❌ Error técnico: {e}")
+
     with st.expander("➕ Agregar Nuevo Proveedor", expanded=True):
         with st.form("new_prov_form"):
             c1, c2 = st.columns(2)
