@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from database import get_db
-from models import Insumo, Mall, ActivityType, Company, OI, User, Proveedor
+from models import Insumo, Mall, ActivityType, Proveedor, OI, User
 from auth import require_role, hash_password
 import bcrypt
 import streamlit as st

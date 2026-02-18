@@ -113,10 +113,10 @@ class ExpenseType(Base):
     name = Column(String, unique=True)
     is_active = Column(Boolean, default=True)
 
-class Company(Base):
-    __tablename__ = "companies"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True) 
+class Proveedor(Base):
+    __tablename__ = "proveedores"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True) 
     provider_type = Column(String, nullable=True) 
     bank_name = Column(String, nullable=True)
     account_number = Column(String, nullable=True)
