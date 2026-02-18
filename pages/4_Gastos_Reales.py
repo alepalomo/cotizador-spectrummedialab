@@ -15,13 +15,14 @@ from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_RIGHT
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import Paragraph
 
-require_role(["ADMIN", "AUTORIZADO"])
+require_role(["ADMIN", "AUTORIZADO", "VENDEDOR"])
 db = next(get_db())
 
 st.title("💸 Registro de Gastos Reales")
 
 tab_odc, tab_caja, tab_host = st.tabs(["📝 ODC", "📦 Caja Chica", "🎤 Host / Talento"])
 
+# --- CARGA INICIAL DE ACTIVIDADES ---
 active_quotes = db.query(Quote).filter(Quote.status == "APROBADA").all()
 
 if not active_quotes:
@@ -29,8 +30,9 @@ if not active_quotes:
     st.info("Pide al administrador que apruebe una cotización o reactiva una liquidada.")
     st.stop() # Detiene la app aquí si no hay nada
 
+# Selector Global (Opcional, ya que los formularios tienen su propio selector, pero lo dejamos por si acaso)
 selected_quote = st.selectbox(
-    "Seleccionar Actividad Aprobada", 
+    "Seleccionar Actividad Aprobada (Global)", 
     active_quotes, 
     format_func=lambda x: f"{x.activity_name} (Presupuesto: ${x.total_cost_usd:,.2f})"
 )
@@ -57,8 +59,13 @@ with tab_odc:
         amount_q = c5.number_input("Monto (Q)", min_value=0.0, step=100.0, key="amt_odc")
         desc_odc = st.text_input("Descripción")
         
-        acts = get_active_activities()
-        act_sel = st.selectbox("Actividad", acts, format_func=lambda x: f"{x.activity_name} ({x.mall.name if x.mall else 'Global'})", key="act_odc")
+        # --- CORRECCIÓN AQUÍ: Usamos active_quotes directamente ---
+        act_sel = st.selectbox(
+            "Actividad", 
+            active_quotes, # <--- ANTES DECÍA acts
+            format_func=lambda x: f"{x.activity_name} ({x.mall.name if x.mall else 'Global'})", 
+            key="act_odc"
+        )
         
         if st.form_submit_button("💾 Guardar ODC"):
             if not act_sel or not oi_sel: st.error("Datos faltantes")
@@ -109,7 +116,13 @@ with tab_caja:
         pay_to_txt = col_pay.text_input("Pagar a:", key="pay_to_cc")
         txt_add = col_txt.text_input("Texto Adicional 2")
         
-        act_cc = st.selectbox("Actividad", acts, format_func=lambda x: f"{x.activity_name} ({x.mall.name if x.mall else 'Global'})", key="act_cc")
+        # --- CORRECCIÓN AQUÍ TAMBIÉN: Usamos active_quotes ---
+        act_cc = st.selectbox(
+            "Actividad", 
+            active_quotes,  # <--- ANTES DECÍA acts
+            format_func=lambda x: f"{x.activity_name} ({x.mall.name if x.mall else 'Global'})", 
+            key="act_cc"
+        )
         
         if st.form_submit_button("💾 Guardar Caja Chica"):
             rate = get_active_rate(db)
@@ -120,20 +133,18 @@ with tab_caja:
                 amount_gtq=amount_cc, amount_usd=amount_cc/rate, 
                 doc_number=fact_cc, company_id=prov_cc.id, 
                 text_additional=txt_add,
-                pay_to=pay_to_txt # Guardamos el nuevo campo
+                pay_to=pay_to_txt
             ))
             db.commit(); st.success("Guardado")
 
     st.divider()
     st.markdown("⬇️ **Reporte Contable Caja Chica**")
     
-    # --- NUEVOS FILTROS DE FECHA ---
     col_d1, col_d2 = st.columns(2)
     start_d_cc = col_d1.date_input("Desde", datetime.date.today().replace(day=1), key="d1_cc")
     end_d_cc = col_d2.date_input("Hasta", datetime.date.today(), key="d2_cc")
     
     if st.button("Generar CSV Contable"):
-        # AQUI AGREGAMOS EL FILTRO DE FECHAS A LA CONSULTA
         data_cc = db.query(Expense).filter(
             Expense.category=="CAJA_CHICA", 
             Expense.date >= start_d_cc, 
@@ -156,7 +167,7 @@ with tab_caja:
                     "Orden Interna": e.oi.oi_code, 
                     "Texto": "B", 
                     "Texto Adicional 2": e.text_additional,
-                    "Pagar A": e.pay_to, # Mantenemos tu cambio anterior
+                    "Pagar A": e.pay_to,
                     "Actividad": e.quote.activity_name
                 })
             df_cc = pd.DataFrame(export_data)
@@ -176,10 +187,9 @@ with tab_host:
     st.markdown("### 1️⃣ Ingresar Datos del Servicio")
     col_h1, col_h2 = st.columns(2)
     
-    # Selección de Proveedor
+    # Selección de Proveedor (Solo necesitamos cargarlos una vez, ya están en provs)
     prov_host = col_h1.selectbox("Seleccionar Talento (Proveedor)", provs, format_func=lambda x: x.name, key="prov_host")
     
-    # Validación visual de CUI
     if prov_host:
         cui_actual = getattr(prov_host, 'cui', None)
         if cui_actual:
@@ -187,37 +197,29 @@ with tab_host:
         else:
             col_h1.error("⚠️ Este talento NO tiene CUI registrado. Ve a Catálogos.")
 
-    # Fecha del documento
     date_host = col_h2.date_input("Fecha de los Documentos", datetime.date.today(), key="date_host")
-    
-    # Descripción Global del Contrato
     contract_desc_form = st.text_input("Descripción Legal para el Contrato", placeholder="Ej: promoción de marca, conducción de evento, creación de contenido...")
 
     st.markdown("**Detalle de Cobros (Filas del Recibo)**")
-    # Inicializar estado de filas si no existe
     if "host_rows" not in st.session_state:
         st.session_state["host_rows"] = [{"desc": "", "rate": 0.0, "days": 0}]
 
-    # Editor de filas dinámico
     for idx, row in enumerate(st.session_state["host_rows"]):
         c_desc, c_rate, c_days, c_del = st.columns([3, 1, 1, 0.5])
         row["desc"] = c_desc.text_input(f"Servicio {idx+1}", value=row["desc"], placeholder="Descripción corta", key=f"hd_{idx}")
         row["rate"] = c_rate.number_input(f"Tarifa Q {idx+1}", value=row["rate"], step=50.0, key=f"hr_{idx}")
         row["days"] = c_days.number_input(f"Días/Cant {idx+1}", value=row["days"], step=1, key=f"hdy_{idx}")
         
-        # Botón para borrar fila
         if c_del.button("🗑️", key=f"del_{idx}"):
             if len(st.session_state["host_rows"]) > 1:
                 st.session_state["host_rows"].pop(idx)
                 st.rerun()
 
-    # Botón agregar fila
     if len(st.session_state["host_rows"]) < 10:
         if st.button("➕ Agregar otra fila de cobro"):
             st.session_state["host_rows"].append({"desc": "", "rate": 0.0, "days": 0})
             st.rerun()
 
-    # Cálculo del Total en tiempo real
     total_host = sum([r["rate"] * r["days"] for r in st.session_state["host_rows"]])
     st.info(f"💰 **Total a Pagar: Q{total_host:,.2f}**")
 
@@ -227,11 +229,11 @@ with tab_host:
     st.markdown("### 2️⃣ Registrar en Actividad")
     st.caption("Selecciona de dónde saldrá el dinero para pagar esto.")
     
-    # Filtramos solo actividades aprobadas
+    # --- CORRECCIÓN AQUÍ TAMBIÉN: Usamos active_quotes ---
     act_host_selection = st.selectbox(
         "Seleccionar Actividad (Presupuesto)", 
-        acts, 
-        format_func=lambda x: f"{x.activity_name} | {x.mall.name if x.mall else 'Global'} | Disponible: Q...", 
+        active_quotes, 
+        format_func=lambda x: f"{x.activity_name} | {x.mall.name if x.mall else 'Global'}", 
         key="act_host"
     )
 
@@ -240,7 +242,6 @@ with tab_host:
     # --- PASO 3: GENERAR DOCUMENTOS ---
     st.markdown("### 3️⃣ Generar y Descargar")
     
-    # Validaciones antes de mostrar el botón grande
     form_valid = True
     if not prov_host or not getattr(prov_host, 'cui', None):
         st.warning("⚠️ Falta CUI del proveedor.")
@@ -270,14 +271,13 @@ with tab_host:
             db.commit()
             st.success("✅ Gasto Registrado en Base de Datos")
 
-            # 2. Generar PDF Recibo (Tu lógica original)
+            # 2. Generar PDF Recibo
             recibo_id_str = f"{new_exp.id:05d}"
             header_img_path = "header_spectrummedia.png"
             width, height = LETTER
             
             buff_recibo = io.BytesIO()
             p = canvas.Canvas(buff_recibo, pagesize=LETTER)
-            # ... (Lógica de dibujo del recibo que ya tenías) ...
             if os.path.exists(header_img_path): p.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
             else: p.setFillColor(colors.black); p.rect(0, height-80, width, 80, fill=1); p.setFillColor(colors.white); p.setFont("Helvetica-Bold", 24); p.drawString(50, height-50, "spectrum media")
             
