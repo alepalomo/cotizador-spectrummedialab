@@ -867,7 +867,7 @@ with tab5:
     st.divider()
     
     # Tabla editable completa
-    companies = db.query(Company).all()
+    companies = db.query(Proveedor).all()
     if companies:
         data_c = []
         for c in companies:
@@ -901,4 +901,4 @@ with tab5:
         )
         
         if st.button("Guardar Cambios Proveedores"):
-            save_changes_generic(Company, edited_comps)
+            save_changes_generic(Proveedor, edited_comps)
