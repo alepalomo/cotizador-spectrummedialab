@@ -19,7 +19,7 @@ tab_pend, tab_act, tab_liq = st.tabs([
 
 # --- TAB 1: APROBACIONES (FLUJO ACTUAL) ---
 with tab_pend:
-    st.info("Aquí administras las cotizaciones nuevas.")
+    st.info("Aquí administras las cotizaciones nuevas y defines el PRECIO FINAL DE VENTA.")
     
     # Traemos las pendientes
     pending_quotes = db.query(Quote).filter(Quote.status == "ENVIADA").all()
@@ -43,17 +43,14 @@ with tab_pend:
                 st.write(f"**Notas:** {q.notes}")
                 st.divider()
 
-                # --- B. LISTA DE ELEMENTOS (Usando QuoteLine) ---
+                # --- B. LISTA DE ELEMENTOS ---
                 st.subheader("📦 Elementos Contemplados")
-                # Traemos las lineas asociadas a esta cotización
                 lines = db.query(QuoteLine).filter(QuoteLine.quote_id == q.id).all()
                 
                 if lines:
                     items_data = []
                     for line in lines:
-                        # Accedemos al nombre del insumo a través de la relación 'line.insumo'
                         insumo_nombre = line.insumo.name if line.insumo else "Insumo Borrado"
-                        
                         items_data.append({
                             "Insumo": insumo_nombre,
                             "Personas/Cant": line.qty_personas,
@@ -61,72 +58,87 @@ with tab_pend:
                             "Costo Línea (Q)": f"Q{line.line_cost_gtq:,.2f}",
                             "Costo Línea ($)": f"${line.line_cost_usd:,.2f}"
                         })
-                    
                     st.dataframe(pd.DataFrame(items_data), use_container_width=True)
                 else:
-                    st.warning("⚠️ Esta cotización aparece vacía (sin líneas).")
+                    st.warning("⚠️ Cotización sin líneas.")
 
-                # --- C. AÑADIR ELEMENTOS (MODO ADMIN) ---
+                # --- C. AÑADIR ELEMENTOS EXTRA ---
                 with st.expander("➕ Añadir Elemento Extra (Sin editar)", expanded=False):
                     col_add1, col_add2, col_add3, col_add4 = st.columns([3, 1, 1, 1])
-                    
-                    # Selectbox de insumos activos
                     all_insumos = db.query(Insumo).filter(Insumo.is_active == True).all()
                     insumo_add = col_add1.selectbox("Buscar Insumo", all_insumos, format_func=lambda x: f"{x.name} (Q{x.cost_gtq})", key=f"ins_sel_{q.id}")
-                    
-                    # Inputs para las columnas de tu modelo
                     qty_add = col_add2.number_input("Cant/Pax", min_value=1.0, value=1.0, key=f"qty_{q.id}")
                     units_add = col_add3.number_input("Días/Unid", min_value=1.0, value=1.0, key=f"unit_{q.id}")
                     
                     if col_add4.button("Agregar", key=f"btn_add_{q.id}"):
-                        # Calcular costos
                         costo_linea_gtq = insumo_add.cost_gtq * qty_add * units_add
-                        costo_linea_usd = costo_linea_gtq / 7.8 # Asumiendo tipo de cambio fijo por simplicidad o traerlo de ExchangeRate
-                        
-                        # Crear la linea usando TU modelo QuoteLine
+                        costo_linea_usd = costo_linea_gtq / 7.8 
                         new_line = QuoteLine(
-                            quote_id=q.id,
-                            insumo_id=insumo_add.id,
-                            qty_personas=qty_add,
-                            units_value=units_add,
-                            line_cost_gtq=costo_linea_gtq,
-                            line_cost_usd=costo_linea_usd
+                            quote_id=q.id, insumo_id=insumo_add.id,
+                            qty_personas=qty_add, units_value=units_add,
+                            line_cost_gtq=costo_linea_gtq, line_cost_usd=costo_linea_usd
                         )
                         db.add(new_line)
-                        
-                        # Actualizar totales de la Cotización Padre (Quote)
                         q.total_cost_gtq += costo_linea_gtq
                         q.total_cost_usd += costo_linea_usd
-                        
                         db.commit()
-                        st.success("¡Elemento agregado!")
                         st.rerun()
 
                 st.divider()
 
-                # --- D. ANÁLISIS FINANCIERO (Margen 70%) ---
+                # --- D. ANÁLISIS FINANCIERO Y PRECIO FINAL ---
                 costo_usd = q.total_cost_usd
-                # Fórmula Margen Bruto: Precio = Costo / (1 - %Margen)
-                # Margen 70% -> Costo / 0.30
+                
+                # 1. Calculamos Sugerido (70%)
                 precio_sugerido = costo_usd / 0.30 if costo_usd > 0 else 0
-                profit = precio_sugerido - costo_usd
+                
+                # Layout de decisión
+                st.markdown("### 🎯 Definición de Precio de Venta")
+                st.caption("El sistema sugiere un precio basado en margen del 70%, pero tú defines el final.")
 
-                k1, k2, k3 = st.columns(3)
-                k1.metric("Costo Total", f"${costo_usd:,.2f}")
-                k2.metric("Precio Venta (Target 70%)", f"${precio_sugerido:,.2f}", delta="Sugerido")
-                k3.metric("Utilidad", f"${profit:,.2f}")
+                col_metrics, col_input = st.columns([2, 2])
+                
+                with col_metrics:
+                    # Mostramos métricas de referencia
+                    st.metric("Costo Total (Base)", f"${costo_usd:,.2f}")
+                    st.metric("Sugerido (70% Margen)", f"${precio_sugerido:,.2f}", delta="Target Ideal")
 
-                # --- E. APROBACIÓN ---
-                st.write("### Decisión Final")
+                with col_input:
+                    # --- INPUT CLAVE: PRECIO REAL ---
+                    # Por defecto ponemos el sugerido, pero es editable
+                    final_price_input = st.number_input(
+                        "💰 Precio Final de Venta (USD)",
+                        min_value=0.0,
+                        value=float(precio_sugerido), # Valor inicial sugerido
+                        step=10.0,
+                        help="Este es el valor que se verá en el Dashboard de Ventas.",
+                        key=f"final_price_{q.id}"
+                    )
+                    
+                    # Calculamos utilidad real en vivo basada en el input
+                    utilidad_real = final_price_input - costo_usd
+                    margen_real = (utilidad_real / final_price_input * 100) if final_price_input > 0 else 0
+                    
+                    if margen_real < 30:
+                        st.error(f"⚠️ Margen bajo: {margen_real:.1f}%")
+                    else:
+                        st.success(f"✅ Margen saludable: {margen_real:.1f}%")
+
+                st.divider()
+
+                # --- E. BOTONES DE ACCIÓN ---
                 btn_col1, btn_col2 = st.columns(2)
                 
-                if btn_col1.button("✅ APROBAR Y ACTIVAR", key=f"ap_{q.id}", type="primary"):
+                if btn_col1.button("✅ APROBAR CON ESTE PRECIO", key=f"ap_{q.id}", type="primary"):
                     q.status = "APROBADA"
-                    # Guardamos el precio sugerido calculado en el momento
-                    q.suggested_price_usd_m70 = precio_sugerido
+                    
+                    # --- AQUÍ GUARDAMOS EL DATO PARA EL DASHBOARD ---
+                    q.final_sale_price_usd = final_price_input # <--- ESTO ES LO IMPORTANTE
+                    q.suggested_price_usd_m70 = precio_sugerido # Guardamos el sugerido como referencia histórica
+                    
                     db.commit()
                     st.balloons()
-                    st.success(f"Actividad aprobada.")
+                    st.success(f"Actividad aprobada. Venta registrada: ${final_price_input:,.2f}")
                     st.rerun()
                 
                 if btn_col2.button("❌ RECHAZAR", key=f"rej_{q.id}"):
