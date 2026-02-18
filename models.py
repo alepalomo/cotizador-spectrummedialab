@@ -142,7 +142,7 @@ class Expense(Base):
     odc_number = Column(String, nullable=True) 
     text_additional = Column(String, nullable=True) 
     host_details = Column(JSON, nullable=True) 
-    company_id = Column(Integer, ForeignKey("companies.id"))
+    company_id = Column(Integer, ForeignKey("proveedores.id"))
     
     # --- NUEVO CAMPO ---
     pay_to = Column(String, nullable=True)
@@ -151,5 +151,5 @@ class Expense(Base):
     
     mall = relationship("Mall")
     oi = relationship("OI")
-    company = relationship("Company")
+    company = relationship("Proveedor")
     quote = relationship("Quote")
