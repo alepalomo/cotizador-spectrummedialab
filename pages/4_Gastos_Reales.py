@@ -4,7 +4,7 @@ import datetime
 import os
 import zipfile 
 from database import get_db
-from models import Expense, Mall, OI, Company, Quote
+from models import Expense, Mall, OI, Proveedor, Quote
 from auth import require_role
 from services import get_active_rate
 import io
@@ -42,7 +42,7 @@ with tab_odc:
         )
         
         c4, c5 = st.columns(2)
-        provs = db.query(Company).filter(Company.is_active==True).all()
+        provs = db.query(Proveedor).filter(Proveedor.is_active==True).all()
         prov_sel = c4.selectbox("Proveedor", provs, format_func=lambda x: x.name, key="prov_odc")
         amount_q = c5.number_input("Monto (Q)", min_value=0.0, step=100.0, key="amt_odc")
         desc_odc = st.text_input("Descripción")
