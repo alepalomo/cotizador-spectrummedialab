@@ -295,32 +295,76 @@ with tab_host:
             p.setFont("Helvetica-Bold", 14); p.drawString(50, y_row-20, "TOTAL PAGADO"); p.drawString(500, y_row-20, f"Q{total_host:,.2f}")
             p.line(200, 100, 400, 100); p.setFont("Helvetica", 8); p.drawCentredString(300, 85, "FIRMA DE CONFORMIDAD"); p.save(); buff_recibo.seek(0)
 
-            # 3. Generar PDF Contrato
+            # 3. Generar PDF Contrato (MODELO EXACTO SEGÚN REFERENCIA)
             buff_contrato = io.BytesIO()
             c = canvas.Canvas(buff_contrato, pagesize=LETTER)
-            if os.path.exists(header_img_path): c.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
+            
+            # --- Encabezado (Imagen superior) ---
+            if os.path.exists(header_img_path):
+                c.drawImage(header_img_path, 0, height-100, width=width, height=100, preserveAspectRatio=False, mask='auto')
             
             styles = getSampleStyleSheet()
-            style_right = ParagraphStyle(name='Right', parent=styles['Normal'], alignment=TA_RIGHT, fontSize=11, leading=14)
-            p_asunto = Paragraph(f"<b>Asunto: Brand Activation Ambassador</b><br/><br/>Guatemala, <b>{format_date_es(date_host)}</b>.", style_right)
-            w, h = p_asunto.wrap(width - 100, 100); p_asunto.drawOn(c, 50, height - 160)
             
-            style_justify = ParagraphStyle(name='Justify', parent=styles['Normal'], alignment=TA_JUSTIFY, fontSize=11, leading=16, spaceAfter=12)
+            # --- Asunto y Fecha (Alineado a la derecha) ---
+            style_right = ParagraphStyle(name='Right', parent=styles['Normal'], alignment=TA_RIGHT, fontSize=10, leading=14)
+            fecha_str = format_date_es(date_host)
+            p_asunto = Paragraph(f"<b>Asunto: Brand Activation Ambassador</b><br/><br/>En la fecha: <b>{fecha_str}</b>.", style_right)
+            w, h = p_asunto.wrap(width - 100, 100)
+            p_asunto.drawOn(c, 50, height - 160)
+            
+            # --- Cuerpo del Contrato (Justificado) ---
+            style_justify = ParagraphStyle(name='Justify', parent=styles['Normal'], alignment=TA_JUSTIFY, fontSize=10, leading=14, spaceAfter=14)
             cui_val = getattr(prov_host, 'cui', 'N/A')
-            text_body_1 = f"Yo, <b>{prov_host.name}</b> me identifico con DPI CUI No. <b>{cui_val}</b>, por medio de la presente acuerdo prestar servicios como <b>BRAND ACTIVATION AMBASSADOR - {contract_desc_form.upper()}</b> para SPECTRUM MEDIA."
-            text_body_2 = f"El pago único será de <b>Q.{total_host:,.2f}</b>."
-            text_body_3 = "Ambas partes reconocen que:<br/>• No existe relación laboral.<br/>• No genera prestaciones.<br/>• Es un servicio mercantil autónomo."
             
-            y_curr = height - 200 
-            for txt in [text_body_1, text_body_2, text_body_3]:
-                p = Paragraph(txt, style_justify); w, h = p.wrap(width - 100, height); p.drawOn(c, 50, y_curr - h); y_curr -= (h + 20)
+            txt_1 = f"Yo, <b>{prov_host.name}</b> me identifico con el Documento Personal de Identificación (DPI) con Código Único de Identificación (CUI) No. <b>{cui_val}</b>, por medio de la presente acuerdo prestar servicios como <b>BRAND ACTIVATION AMBASSADOR - {contract_desc_form.upper()}</b> para SPECTRUM MEDIA prestando un servicio y realizando actividades relacionadas con promoción de producto, eventos o generación de contenido, según lo asignado."
             
-            center_x = width / 2; y_sig_1 = y_curr - 80; c.setLineWidth(1); c.line(center_x - 100, y_sig_1, center_x + 100, y_sig_1)
-            style_center = ParagraphStyle(name='Center', parent=styles['Normal'], alignment=TA_CENTER, fontSize=10, leading=12)
-            p_sig1 = Paragraph(f"<b>{prov_host.name}</b><br/>Brand Ambassador", style_center); w, h = p_sig1.wrap(200, 50); p_sig1.drawOn(c, center_x - 100, y_sig_1 - h - 5)
+            txt_2 = f"Como compensación por estos servicios, se entregará un pago único de <b>Q.{total_host:,.2f}</b>, el día y lugar que me ha sido notificado previamente."
             
-            c.save(); buff_contrato.seek(0)
-
+            txt_3 = "En consecuencia, ambas partes reconocen expresamente que:<br/>• No existe entre ellas relación laboral de ningún tipo, conforme a la legislación laboral vigente.<br/>• No se genera ninguna obligación de carácter laboral, tales como pago de salarios, prestaciones laborales, indemnizaciones, o cualquier otro derecho laboral que derive de una relación de trabajo subordinado.<br/>• Cada parte actúa de forma autónoma, sin que exista dependencia, ni vínculo permanente más allá del objeto del contrato de servicios."
+            
+            txt_4 = f"La presente notificación tiene como finalidad reiterar la naturaleza de la prestación de servicios, y dejar claro que no se establece, ni se presumirá, ningún tipo de vínculo laboral entre Spectrum Media y {prov_host.name}."
+            
+            # Dibujar los párrafos en orden calculando el alto dinámicamente
+            y_curr = height - 210 
+            for txt in [txt_1, txt_2, txt_3, txt_4]:
+                p = Paragraph(txt, style_justify)
+                w, h = p.wrap(width - 100, height)
+                p.drawOn(c, 50, y_curr - h)
+                y_curr -= (h + 16) # Espacio entre párrafos
+            
+            # --- ZONA DE FIRMAS (Centradas) ---
+            center_x = width / 2
+            style_center = ParagraphStyle(name='Center', parent=styles['Normal'], alignment=TA_CENTER, fontSize=9, leading=11)
+            
+            # 1. Línea y texto del Talento (Brand Ambassador)
+            y_sig1_line = y_curr - 40
+            c.setLineWidth(1)
+            c.setStrokeColor(colors.black)
+            c.line(center_x - 120, y_sig1_line, center_x + 120, y_sig1_line)
+            
+            p_sig1 = Paragraph(f"<b>Firma del Brand Ambassador</b><br/>{prov_host.name}", style_center)
+            w, h = p_sig1.wrap(240, 50)
+            p_sig1.drawOn(c, center_x - 120, y_sig1_line - h - 5)
+            
+            # 2. Insertar Imagen de la Firma (en medio)
+            firma_img_path = "firma.png"
+            y_sig2_line = y_sig1_line - 100 # Espacio hacia la segunda línea
+            
+            if os.path.exists(firma_img_path):
+                img_w, img_h = 130, 60 # Tamaño aproximado de la firma
+                img_x = center_x - (img_w / 2)
+                img_y = y_sig2_line + 15 # Posicionada un poco por encima de la segunda línea
+                c.drawImage(firma_img_path, img_x, img_y, width=img_w, height=img_h, mask='auto', preserveAspectRatio=True)
+            
+            # 3. Línea y texto de la Empresa
+            c.line(center_x - 120, y_sig2_line, center_x + 120, y_sig2_line)
+            
+            p_sig2 = Paragraph("<b>Firma del responsable de la empresa:</b><br/>Maria Jose Aguilar, Product Executive", style_center)
+            w, h = p_sig2.wrap(240, 50)
+            p_sig2.drawOn(c, center_x - 120, y_sig2_line - h - 5)
+            
+            c.save()
+            buff_contrato.seek(0)
             # 4. Crear ZIP y GUARDAR EN MEMORIA (st.session_state)
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
