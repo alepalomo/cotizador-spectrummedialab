@@ -322,14 +322,15 @@ with tab_host:
             c.save(); buff_contrato.seek(0)
 
             # 4. Crear ZIP y botón de descarga
-            with zipfile.ZipFile(io.BytesIO(), "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 zip_file.writestr(f"Recibo_{recibo_id_str}.pdf", buff_recibo.getvalue())
                 zip_file.writestr(f"Contrato_{recibo_id_str}.pdf", buff_contrato.getvalue())
                 
                 st.balloons()
                 st.download_button(
                     label=f"⬇️ DESCARGAR DOCUMENTOS (RECIBO #{recibo_id_str})", 
-                    data=zip_file.fp.getvalue(), 
+                    data=zip_buffer.getvalue(), 
                     file_name=f"Pack_Legal_{prov_host.name}_{recibo_id_str}.zip", 
                     mime="application/zip",
                     key=f"dl_btn_{recibo_id_str}"
