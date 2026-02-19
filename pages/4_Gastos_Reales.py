@@ -30,13 +30,6 @@ if not active_quotes:
     st.info("Pide al administrador que apruebe una cotización o reactiva una liquidada.")
     st.stop() # Detiene la app aquí si no hay nada
 
-# Selector Global (Opcional, ya que los formularios tienen su propio selector, pero lo dejamos por si acaso)
-selected_quote = st.selectbox(
-    "Seleccionar Actividad Aprobada (Global)", 
-    active_quotes, 
-    format_func=lambda x: f"{x.activity_name} (Presupuesto: ${x.total_cost_usd:,.2f})"
-)
-
 # --- PESTAÑA 1: ODC ---
 with tab_odc:
     st.subheader("Registro por Orden de Compra")
