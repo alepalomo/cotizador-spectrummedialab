@@ -262,7 +262,7 @@ with tab_host:
             )
             db.add(new_exp)
             db.commit()
-            st.success("✅ Gasto Registrado en Base de Datos")
+            
 
             # 2. Generar PDF Recibo
             recibo_id_str = f"{new_exp.id:05d}"
@@ -321,17 +321,27 @@ with tab_host:
             
             c.save(); buff_contrato.seek(0)
 
-            # 4. Crear ZIP y botón de descarga
+            # 4. Crear ZIP y GUARDAR EN MEMORIA (st.session_state)
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 zip_file.writestr(f"Recibo_{recibo_id_str}.pdf", buff_recibo.getvalue())
                 zip_file.writestr(f"Contrato_{recibo_id_str}.pdf", buff_contrato.getvalue())
-                
-                st.balloons()
-                st.download_button(
-                    label=f"⬇️ DESCARGAR DOCUMENTOS (RECIBO #{recibo_id_str})", 
-                    data=zip_buffer.getvalue(), 
-                    file_name=f"Pack_Legal_{prov_host.name}_{recibo_id_str}.zip", 
-                    mime="application/zip",
-                    key=f"dl_btn_{recibo_id_str}"
-                )
+            
+            # Guardamos los bytes del ZIP en la memoria de Streamlit
+            st.session_state["zip_data_host"] = zip_buffer.getvalue()
+            st.session_state["zip_name_host"] = f"Pack_Legal_{prov_host.name}_{recibo_id_str}.zip"
+            
+            st.success("✅ Gasto Registrado en Base de Datos y Documentos Listos")
+            st.balloons()
+
+    # --- BOTÓN DE DESCARGA: AFUERA del 'if st.button' ---
+    # Solo se muestra si el ZIP ya está en memoria
+    if "zip_data_host" in st.session_state:
+        st.info("Tus documentos están listos para descargar:")
+        st.download_button(
+            label="⬇️ DESCARGAR DOCUMENTOS (CLICK AQUÍ)", 
+            data=st.session_state["zip_data_host"], 
+            file_name=st.session_state["zip_name_host"], 
+            mime="application/zip",
+            key="dl_btn_final"
+        )
